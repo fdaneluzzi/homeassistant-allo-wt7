@@ -12,7 +12,6 @@ and doorbell rings.
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from homeassistant.components.event import EventDeviceClass, EventEntity
 from homeassistant.config_entries import ConfigEntry
@@ -21,7 +20,6 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .client import DoorbellRing
 from .const import (
     DOMAIN,
     EVENT_DOORBELL,
@@ -82,11 +80,6 @@ class AlloWT7DoorbellEvent(EventEntity):
         )
 
     @callback
-    def _handle_ring(self, ring: DoorbellRing) -> None:
-        extra: dict[str, Any] = {}
-        if ring.snapshot_url:
-            extra["snapshot_url"] = ring.snapshot_url
-        if ring.alarm_id:
-            extra["alarm_id"] = ring.alarm_id
-        self._trigger_event(EVENT_TYPE_RING, extra)
+    def _handle_ring(self) -> None:
+        self._trigger_event(EVENT_TYPE_RING, {})
         self.async_write_ha_state()

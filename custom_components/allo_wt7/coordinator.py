@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from typing import Any
 
 import aiohttp
@@ -26,13 +26,12 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .client import (
     AlloWT7AuthError,
     AlloWT7Client,
+    AlloWT7ConnectionError,
     AlloWT7Error,
     DeviceInfo,
-    DoorbellRing,
     generate_client_id,
 )
 from .const import (
-    ALARM_POLL_WINDOW_SECONDS,
     CONF_DOORBELL_ENABLED,
     CONF_DOORBELL_POLL_INTERVAL,
     CONF_EMAIL,
@@ -80,8 +79,7 @@ class AlloWT7Coordinator(DataUpdateCoordinator):
         self.device_info: DeviceInfo | None = None
         # Doorbell polling state
         self._doorbell_task: asyncio.Task | None = None
-        self._alarm_logged_in: bool = False
-        self._last_ring_seen: datetime = datetime.now(tz=timezone.utc) - timedelta(seconds=ALARM_POLL_WINDOW_SECONDS)
+        self._was_calling: bool = False  # previous <calling> state for edge detection
 
         session = async_get_clientsession(hass)
         self._client = AlloWT7Client(
@@ -115,8 +113,6 @@ class AlloWT7Coordinator(DataUpdateCoordinator):
                 umid=device_info.get("umid", ""),
                 model=device_info.get("model", ""),
                 name=device_info.get("name", ""),
-                session_id=device_info.get("session_id", ""),
-                account_id=device_info.get("account_id", ""),
             )
         self._client._client_id = self._client_id  # patch in client_id
         await self._save()
@@ -137,8 +133,6 @@ class AlloWT7Coordinator(DataUpdateCoordinator):
                         "umid": self.device_info.umid,
                         "model": self.device_info.model,
                         "name": self.device_info.name,
-                        "session_id": self.device_info.session_id,
-                        "account_id": self.device_info.account_id,
                     }
                     if self.device_info
                     else None
@@ -153,9 +147,9 @@ class AlloWT7Coordinator(DataUpdateCoordinator):
             self._doorbell_task = None
 
     async def _doorbell_poll_loop(self) -> None:
-        """Background task: poll the Quvii alarm server for doorbell events."""
+        """Background task: poll get.device.status on the LAN for <calling> changes."""
         interval = self._opt(CONF_DOORBELL_POLL_INTERVAL, DEFAULT_DOORBELL_POLL_INTERVAL)
-        _LOGGER.debug("doorbell poll loop started (interval=%ss)", interval)
+        _LOGGER.debug("doorbell poll loop started (LAN, interval=%.1fs)", interval)
 
         # Brief initial delay so OAC refresh can complete first
         await asyncio.sleep(5)
@@ -170,56 +164,33 @@ class AlloWT7Coordinator(DataUpdateCoordinator):
             await asyncio.sleep(interval)
 
     async def _doorbell_poll_once(self) -> None:
-        """One doorbell poll iteration."""
-        dev = self.device_info
-        if not dev or not dev.umid:
-            return
-        session_id = dev.session_id
-        if not session_id:
-            # No session yet — try to get one by refreshing the OAC
-            try:
-                await self._ensure_oac(force_refresh=False)
-                dev = self.device_info
-                session_id = dev.session_id if dev else ""
-            except Exception:
-                return
-        if not session_id:
-            return
-
-        # Login to alarm server once per HA session (or after OAC refresh)
-        if not self._alarm_logged_in:
-            ok = await self._client.alarm_login(session_id, dev.account_id)
-            if ok:
-                self._alarm_logged_in = True
-                _LOGGER.info("Alarm server login OK — doorbell polling active")
-            else:
-                _LOGGER.warning(
-                    "Alarm server login failed — doorbell events will not work. "
-                    "This is expected on first run if the alarm server requires "
-                    "a fresh session; will retry automatically."
-                )
-                return
-
-        since = self._last_ring_seen - timedelta(seconds=5)  # 5s overlap for safety
-        rings = await self._client.poll_doorbell_rings(session_id, dev.umid, since)
-
-        for ring in rings:
-            if ring.timestamp <= self._last_ring_seen:
-                continue  # already processed
-            self._last_ring_seen = ring.timestamp
-            _LOGGER.info(
-                "Doorbell ring detected at %s (alarm_id=%s)",
-                ring.timestamp.isoformat(),
-                ring.alarm_id,
+        """One doorbell poll iteration via LAN get.device.status."""
+        oac = await self._ensure_oac(force_refresh=False)
+        try:
+            status = await self._client.get_device_status(
+                monitor_ip=self._data[CONF_MONITOR_IP],
+                oac=oac,
+                scheme="https",
             )
+        except AlloWT7AuthError:
+            # OAC expired mid-session — force refresh next cycle
+            _LOGGER.debug("doorbell poll: OAC expired, will refresh next cycle")
+            self._oac_expires_at = 0.0
+            return
+        except (AlloWT7ConnectionError, AlloWT7Error) as err:
+            _LOGGER.debug("doorbell poll: %s", err)
+            return
+
+        calling = status.get("calling", False)
+
+        # Fire on rising edge only (false → true)
+        if calling and not self._was_calling:
+            _LOGGER.info("Doorbell ring detected (<calling> went true)")
             async_dispatcher_send(
                 self._hass,
                 f"{SIGNAL_DOORBELL_RING}_{self._entry.entry_id}",
-                ring,
             )
-            # Reset alarm login flag if we got a 401-ish response
-        if rings == [] and self._alarm_logged_in:
-            pass  # silence is OK — no rings in window
+        self._was_calling = calling
 
     async def _ensure_oac(self, *, force_refresh: bool = False) -> str:
         if not force_refresh and self._oac and time.time() < self._oac_expires_at:

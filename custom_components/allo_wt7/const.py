@@ -61,21 +61,17 @@ LAN_ERROR_WRONG_PIN = "-3"
 LAN_ERROR_NOT_SUPPORTED = "-10"
 LAN_ERROR_AUTH_INVALID = "401"
 
-# --- Alarm server (reverse-engineered, port confirmed via PCAPdroid 2026-05-23)
-ALARM_SERVER_HOST = "intelbras-4.qvcloud.net"
-ALARM_SERVER_PORT = 4443
-ALARM_SERVER_PATH = "/UserAlarm"
-ALARM_COMMAND_LOGIN = "client-login"
-ALARM_COMMAND_QUERY = "client-query-recordlist"
-ALARM_TYPE_CALL = 19          # doorbell press / video call request (ALARM_TYPE_CALL in AlarmMessageInfo)
-ALARM_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
-ALARM_POLL_WINDOW_SECONDS = 300   # query records from last 5 minutes each poll
+# --- LAN doorbell detection via get.device.status <calling> field
+# Discovered 2026-05-24: the LAN /tdkcgi endpoint exposes <calling>true/false
+# in get.device.status, which transitions to true when the doorbell is pressed.
+# This replaces the cloud alarm server approach (port 4443 requires FCM token).
+LAN_CMD_DEVICE_STATUS = "get.device.status"
 
 # --- Doorbell polling config keys
 CONF_DOORBELL_ENABLED = "doorbell_enabled"
 CONF_DOORBELL_POLL_INTERVAL = "doorbell_poll_interval_s"
 DEFAULT_DOORBELL_ENABLED = True
-DEFAULT_DOORBELL_POLL_INTERVAL = 30
+DEFAULT_DOORBELL_POLL_INTERVAL = 2  # seconds — LAN poll is cheap
 
 # --- Event entity
 EVENT_DOORBELL = "doorbell"
