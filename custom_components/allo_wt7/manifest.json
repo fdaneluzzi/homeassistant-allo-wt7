@@ -1,0 +1,13 @@
+{
+  "domain": "allo_wt7",
+  "name": "Intelbras Allo wT7",
+  "version": "0.1.0",
+  "documentation": "https://github.com/fdaneluzzi/homeassistant-allo-wt7",
+  "issue_tracker": "https://github.com/fdaneluzzi/homeassistant-allo-wt7/issues",
+  "codeowners": ["@fdaneluzzi"],
+  "config_flow": true,
+  "iot_class": "local_polling",
+  "integration_type": "device",
+  "requirements": [],
+  "dependencies": []
+}

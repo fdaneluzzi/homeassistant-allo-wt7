@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local config that might leak credentials
+*.env
+.env
+config.local.*
+secrets/
+
+# HA dev artifacts
+config/
+.HA_VERSION
+home-assistant_v2.db*
+home-assistant.log*
+
+# Coverage / dist
+.coverage
+htmlcov/
+dist/
+build/
