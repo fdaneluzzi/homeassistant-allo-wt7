@@ -27,11 +27,20 @@ import time
 import uuid
 import xml.etree.ElementTree as ET
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 
 import aiohttp
 
 from .const import (
+    ALARM_COMMAND_LOGIN,
+    ALARM_COMMAND_QUERY,
+    ALARM_POLL_WINDOW_SECONDS,
+    ALARM_SERVER_HOST,
+    ALARM_SERVER_PATH,
+    ALARM_SERVER_PORT,
+    ALARM_TIME_FORMAT,
+    ALARM_TYPE_CALL,
     APP_ID,
     CLIENT_TYPE,
     CLOUD_HOST,
@@ -81,6 +90,18 @@ class DeviceInfo:
     umid: str
     model: str
     name: str
+    session_id: str = ""
+    account_id: str = ""
+
+
+@dataclass
+class DoorbellRing:
+    """A single doorbell press event parsed from the alarm server."""
+    alarm_id: str
+    record_id: str
+    device_id: str
+    timestamp: datetime
+    snapshot_url: str = ""
 
 
 def _ssl_no_verify() -> ssl.SSLContext:
@@ -219,6 +240,117 @@ class AlloWT7Client:
             await self._send_opendoor(monitor_ip, oac, unlock_pin, lock_number, scheme)
             self._unlock_history.append(time.monotonic())
 
+    async def alarm_login(self, session_id: str, account_id: str) -> bool:
+        """Login to the alarm server so subsequent queries are authorised.
+
+        Uses the same XML envelope protocol as the cloud auth, but posting to
+        intelbras-4.qvcloud.net:4443/UserAlarm with command=client-login.
+
+        Returns True on success.  Logs and returns False on any failure so the
+        integration can continue working without doorbell support.
+        """
+        body = _build_alarm_envelope(
+            ALARM_COMMAND_LOGIN,
+            session_id,
+            f"<content>"
+            f"<account><id>{account_id}</id><authserver>{CLOUD_HOST}</authserver></account>"
+            f"<client>"
+            f"<id>{self._client_id}</id>"
+            f"<type>{CLIENT_TYPE}</type>"
+            f"<oemid>{OEM_ID}</oemid>"
+            f"<appid>{APP_ID}</appid>"
+            f"<notifylang>pt</notifylang>"
+            f"<tokentype>1</tokentype>"
+            f"</client>"
+            f"</content>",
+        )
+        try:
+            url = f"https://{ALARM_SERVER_HOST}:{ALARM_SERVER_PORT}{ALARM_SERVER_PATH}"
+            ctx = _ssl_no_verify()
+            async with aiohttp.ClientSession() as session:
+                t = aiohttp.ClientTimeout(total=self._request_timeout_s)
+                async with session.post(
+                    url,
+                    data=body,
+                    headers={
+                        "Content-Type": "application/xml;charset=utf-8",
+                        "User-Agent": USER_AGENT,
+                    },
+                    ssl=ctx,
+                    timeout=t,
+                ) as resp:
+                    raw = await resp.read()
+                    if resp.status != 200:
+                        _LOGGER.warning("alarm_login: HTTP %s", resp.status)
+                        return False
+                    env = _parse_envelope(raw)
+                    if env is None:
+                        _LOGGER.warning("alarm_login: no envelope in response")
+                        return False
+                    result = env.findtext(".//result", "")
+                    if result not in ("0", "100"):
+                        _LOGGER.warning("alarm_login: result=%s", result)
+                        return False
+                    _LOGGER.debug("alarm_login: OK (result=%s)", result)
+                    return True
+        except (aiohttp.ClientConnectorError, asyncio.TimeoutError) as exc:
+            _LOGGER.debug("alarm_login: unreachable (%s)", exc)
+            return False
+
+    async def poll_doorbell_rings(
+        self,
+        session_id: str,
+        umid: str,
+        since: datetime,
+    ) -> list[DoorbellRing]:
+        """Query the alarm server for doorbell events since `since`.
+
+        Returns a (possibly empty) list of DoorbellRing events in chronological
+        order.  On any error, logs at DEBUG and returns an empty list so the
+        polling loop can silently retry.
+        """
+        until = datetime.now(tz=timezone.utc) + timedelta(seconds=60)
+        start_str = since.strftime(ALARM_TIME_FORMAT)
+        end_str = until.strftime(ALARM_TIME_FORMAT)
+
+        body = _build_alarm_envelope(
+            ALARM_COMMAND_QUERY,
+            session_id,
+            f"<content>"
+            f"<maxid></maxid>"
+            f"<pageno>1</pageno>"
+            f"<pagelinenum>20</pagelinenum>"
+            f"<filter>"
+            f"<devid><id>{umid}</id></devid>"
+            f"<event><type>{ALARM_TYPE_CALL}</type></event>"
+            f"<peroid><start>{start_str}</start><end>{end_str}</end></peroid>"
+            f"</filter>"
+            f"</content>",
+        )
+        try:
+            url = f"https://{ALARM_SERVER_HOST}:{ALARM_SERVER_PORT}{ALARM_SERVER_PATH}"
+            ctx = _ssl_no_verify()
+            async with aiohttp.ClientSession() as session:
+                t = aiohttp.ClientTimeout(total=self._request_timeout_s)
+                async with session.post(
+                    url,
+                    data=body,
+                    headers={
+                        "Content-Type": "application/xml;charset=utf-8",
+                        "User-Agent": USER_AGENT,
+                    },
+                    ssl=ctx,
+                    timeout=t,
+                ) as resp:
+                    raw = await resp.read()
+                    if resp.status != 200:
+                        _LOGGER.debug("poll_doorbell: HTTP %s", resp.status)
+                        return []
+                    return _parse_alarm_records(raw)
+        except (aiohttp.ClientConnectorError, asyncio.TimeoutError) as exc:
+            _LOGGER.debug("poll_doorbell: unreachable (%s)", exc)
+            return []
+
     async def check_pin(
         self,
         monitor_ip: str,
@@ -291,7 +423,8 @@ class AlloWT7Client:
                 if env is None:
                     raise AlloWT7AuthError("login: no envelope in response")
                 result = env.findtext(".//result", "")
-                session_id = env.findtext(".//session/id") or ""
+                session_id = env.findtext(".//session/id") or env.findtext(".//token") or ""
+                account_id = env.findtext(".//account-id", "")
                 if result not in CLOUD_RESULT_OK:
                     msg = {
                         CLOUD_RESULT_BAD_CREDENTIALS: "invalid credentials",
@@ -333,6 +466,8 @@ class AlloWT7Client:
                     umid=dev.findtext("id", ""),
                     model=dev.findtext("model", ""),
                     name=dev.findtext("name", ""),
+                    session_id=session_id,
+                    account_id=account_id,
                 )
                 _LOGGER.info(
                     "cloud OAC obtained (%d chars) for device %s (%s)",
@@ -448,3 +583,89 @@ class AlloWT7Client:
 def generate_client_id() -> str:
     """Stable per-installation client ID, matching the Quvii SDK pattern."""
     return f"003-{APP_ID}-{uuid.uuid4().hex[:16]}"
+
+
+def _build_alarm_envelope(command: str, session_id: str, content_xml: str) -> bytes:
+    """Build an XML envelope for the alarm server.
+
+    The alarm server uses a simpler envelope than the cloud auth: no <client>
+    block in the header, no version/user-data.  Documented in AlarmRequestHelper
+    (initHeader + AlarmRequestHelper commands) from the Allo Plus v10 APK.
+    """
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        "<envelope>"
+        "<header>"
+        f"<flag>{ENVELOPE_FLAG}</flag>"
+        f"<session>{session_id}</session>"
+        f"<command>{command}</command>"
+        "<seq>0</seq>"
+        "</header>"
+        f"{content_xml}"
+        "</envelope>"
+    )
+    return xml.encode("utf-8")
+
+
+def _parse_alarm_records(raw: bytes) -> list[DoorbellRing]:
+    """Parse alarm list response XML into DoorbellRing objects.
+
+    Response schema (from AlarmListQueryResp in APK):
+      <envelope>
+        <content>
+          <record>
+            <data>
+              <id>...</id>
+              <alarmid>...</alarmid>
+              <devid>...</devid>
+              <event>19</event>
+              <time>2026-05-24 10:30:00</time>
+              <recordsubresurl>...</recordsubresurl>  <!-- optional snapshot -->
+            </data>
+            ...
+          </record>
+        </content>
+      </envelope>
+    """
+    env = _parse_envelope(raw)
+    if env is None:
+        return []
+    result = env.findtext(".//result", "0")
+    if result not in ("0", "100", ""):
+        _LOGGER.debug("poll_doorbell: alarm server result=%s", result)
+        return []
+
+    rings: list[DoorbellRing] = []
+    for item in env.findall(".//record/data"):
+        event_type = item.findtext("event", "")
+        try:
+            if int(event_type) != ALARM_TYPE_CALL:
+                continue
+        except ValueError:
+            continue
+
+        time_str = item.findtext("time", "")
+        try:
+            ts = datetime.strptime(time_str, ALARM_TIME_FORMAT).replace(
+                tzinfo=timezone.utc
+            )
+        except ValueError:
+            _LOGGER.debug("poll_doorbell: unparseable time %r", time_str)
+            continue
+
+        rings.append(
+            DoorbellRing(
+                alarm_id=item.findtext("alarmid", ""),
+                record_id=item.findtext("id", ""),
+                device_id=item.findtext("devid", ""),
+                timestamp=ts,
+                snapshot_url=(
+                    item.findtext("recordsubresurl")
+                    or item.findtext("recordresurl")
+                    or ""
+                ),
+            )
+        )
+
+    rings.sort(key=lambda r: r.timestamp)
+    return rings

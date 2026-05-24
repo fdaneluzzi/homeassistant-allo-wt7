@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 DOMAIN = "allo_wt7"
-PLATFORMS = ["button"]
+PLATFORMS = ["button", "event"]
 
 MANUFACTURER = "Intelbras"
 MODEL = "Allo wT7 (IDS9478AW / Qualvision)"
@@ -60,6 +60,26 @@ LAN_ERROR_COMMAND_UNKNOWN = "-1"
 LAN_ERROR_WRONG_PIN = "-3"
 LAN_ERROR_NOT_SUPPORTED = "-10"
 LAN_ERROR_AUTH_INVALID = "401"
+
+# --- Alarm server (reverse-engineered, port confirmed via PCAPdroid 2026-05-23)
+ALARM_SERVER_HOST = "intelbras-4.qvcloud.net"
+ALARM_SERVER_PORT = 4443
+ALARM_SERVER_PATH = "/UserAlarm"
+ALARM_COMMAND_LOGIN = "client-login"
+ALARM_COMMAND_QUERY = "client-query-recordlist"
+ALARM_TYPE_CALL = 19          # doorbell press / video call request (ALARM_TYPE_CALL in AlarmMessageInfo)
+ALARM_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+ALARM_POLL_WINDOW_SECONDS = 300   # query records from last 5 minutes each poll
+
+# --- Doorbell polling config keys
+CONF_DOORBELL_ENABLED = "doorbell_enabled"
+CONF_DOORBELL_POLL_INTERVAL = "doorbell_poll_interval_s"
+DEFAULT_DOORBELL_ENABLED = True
+DEFAULT_DOORBELL_POLL_INTERVAL = 30
+
+# --- Event entity
+EVENT_DOORBELL = "doorbell"
+EVENT_TYPE_RING = "ring"
 
 # --- Services
 SERVICE_OPEN_DOOR = "open_door"
