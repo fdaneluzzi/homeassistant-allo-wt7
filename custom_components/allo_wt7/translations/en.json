@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Intelbras Allo wT7",
-        "description": "Connect Home Assistant to your Intelbras Allo wT7 video intercom.\n\nYou'll need:\n- Your Allo Plus app email and password\n- The numeric unlock PIN you set in the app on first use\n- The local IP address of your wT7 monitor",
+        "description": "Connect Home Assistant to your Intelbras Allo wT7 video intercom.\n\nYou'll need:\n- Your Allo Plus app email and password\n- The numeric unlock PIN you set in the app on first use\n- The local IP address of your wT7 monitor\n\nAfter setup, each door becomes a `button.*` entity in HA. One press = one open pulse on the wT7 relay. (Garage gates typically toggle: a second press closes.)",
         "data": {
           "email": "Email (Allo Plus account)",
           "password": "Password (Allo Plus account)",

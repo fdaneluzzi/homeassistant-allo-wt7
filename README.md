@@ -5,12 +5,15 @@
 
 Open the doors of your **Intelbras Allo wT7** video intercom from Home Assistant — over the local network, without keeping the official Allo Plus app running.
 
-> ⚠️ **Status: 0.1.0 (initial release).** Door opening is working and validated against a real device (model `IDS9478AW`). Doorbell ring detection, two-way audio, and camera stream are **out of scope** for this version (see [Roadmap](#roadmap)).
+> **Status: 0.2.0.** Door opening is working and validated against a real device (model `IDS9478AW`). Doorbell ring detection, two-way audio, and camera stream are **out of scope** for this version (see [Roadmap](#roadmap)).
+>
+> ⚠️ **Breaking change in 0.2.0:** previously the integration exposed each door as a `lock` entity. The wT7 has no state sensor and the relay is a momentary pulse, so the lock model was inaccurate (especially for the garage gate, where each pulse toggles the motor in the opposite direction). Doors are now exposed as `button` entities. If you have automations referencing `lock.<door_name>`, update them to `button.<door_name>` (press action stays the same). See [Migrating to 0.2.0](#migrating-to-020).
 
 ## Features
 
-- 🔓 **Open door(s)** as Home Assistant `lock` entities
+- 🔘 **Open door(s)** as Home Assistant `button` entities (one press → one open pulse)
 - 🚪 **Dual-door support**: a wT7 typically controls a social door + a garage gate
+- 🛠️ **Service action** `allo_wt7.open_door` for automations that need to pass `lock_number` dynamically
 - 🌐 **Local-first**: the cloud is hit once every 12h (configurable) to refresh credentials; every door-open is direct LAN
 - 🛡️ **Anti-detection hardened**: stable client ID, OAC cache, exponential backoff on auth errors, local rate-limit, User-Agent matching the official app
 - 🔒 **Your password and PIN are stored encrypted by Home Assistant**, never transmitted in plaintext
@@ -55,10 +58,36 @@ The integration is fully configured through the UI:
 | Door 2 enabled | Uncheck if your installation only has one door |
 
 After save, you get:
-- `lock.<door1_name>`
-- `lock.<door2_name>` (if enabled)
+- `button.<door1_name>`
+- `button.<door2_name>` (if enabled)
 
-Each `unlock` action pulses the relay; the door auto-closes by spring (the monitor has no close command).
+Each press fires one open-door pulse on the relay:
+- **Social door** (`locknumber=1` by default): the relay momentarily unlocks the door; spring closes it back.
+- **Garage gate** (`locknumber=2` by default): the relay sends a pulse to the gate motor. Most gate motors **toggle** — pressing once opens, pressing again closes.
+
+### Using the service in automations
+
+```yaml
+service: allo_wt7.open_door
+data:
+  lock_number: 1        # or 2 for the garage gate
+```
+
+If you have multiple wT7 monitors configured, also pass `entry_id`.
+
+## Why `button` and not `lock`?
+
+The wT7 has no state sensor — it cannot tell HA whether a door is currently open or closed. Earlier versions exposed each door as a `lock` entity with fake "unlocked → re-locked after 5s" state, which was misleading (especially for the garage gate). A `button` is honest with the hardware: one press = one pulse. If you need state, build a template `binary_sensor` on top of an external sensor you trust.
+
+## Migrating to 0.2.0
+
+If you used 0.1.0, your dashboards/automations referenced `lock.<door_name>` with `unlock` actions. To migrate:
+
+1. **Automations / scripts:** change `service: lock.unlock` + `entity_id: lock.<door>` to `service: button.press` + `entity_id: button.<door>`. The entity names are preserved (only the domain changes from `lock` to `button`).
+2. **Lovelace cards:** replace any `entity: lock.<door>` with `entity: button.<door>`. Default `entities` cards render `button` correctly with a "Press" button.
+3. **Voice assistants** (Alexa / Google): since `button` is not exposed to voice by default, create a HA script wrapping `allo_wt7.open_door` and expose the script instead.
+
+After updating to 0.2.0 in HACS, **remove and re-add the integration** in Settings → Devices & Services to drop the old `lock.*` entities cleanly.
 
 ## How it works
 
@@ -94,10 +123,11 @@ The cloud is contacted only to fetch the `out-auth-code` (OAC) — a per-device 
 
 ## Roadmap
 
-- [x] 0.1.0 — Open doors (1 and 2)
-- [ ] 0.2.0 — Doorbell ring detection (probably via the `mqttintelbras.qvcloud.net:1884` MQTT broker)
-- [ ] 0.3.0 — Snapshot from the front camera
-- [ ] 0.4.0 — Two-way audio (requires implementing the Quvii P2P/KCP UDP protocol — non-trivial)
+- [x] 0.1.0 — Open doors (as `lock` entities — deprecated)
+- [x] 0.2.0 — Switch to `button` entities + service action (current)
+- [ ] 0.3.0 — Doorbell ring detection (probably via the `mqttintelbras.qvcloud.net:1884` MQTT broker)
+- [ ] 0.4.0 — Snapshot from the front camera
+- [ ] 0.5.0 — Two-way audio (requires implementing the Quvii P2P/KCP UDP protocol — non-trivial)
 - [ ] Push to HACS default repositories
 
 ## Reporting issues

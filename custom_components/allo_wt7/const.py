@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 DOMAIN = "allo_wt7"
-PLATFORMS = ["lock"]
+PLATFORMS = ["button"]
 
 MANUFACTURER = "Intelbras"
 MODEL = "Allo wT7 (IDS9478AW / Qualvision)"

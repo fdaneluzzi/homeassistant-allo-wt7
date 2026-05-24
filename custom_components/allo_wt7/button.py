@@ -1,11 +1,15 @@
-"""Lock entities for the Intelbras Allo wT7."""
+"""Button entities for the Intelbras Allo wT7.
+
+The wT7 controls relays that pulse open (or trigger gate-motor commands).
+There is no sensor to report door state, so we expose each output as a
+stateless `button` — pressing it fires one pulse. Honest to the hardware.
+"""
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
-from homeassistant.components.lock import LockEntity
+from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -25,10 +29,6 @@ from .coordinator import AlloWT7Coordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-# How long to show the lock as "unlocked" in HA after a successful open.
-# The physical relay pulse is short; the door auto-closes by spring.
-_UNLOCKED_FEEDBACK_SECONDS = 5
-
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -38,25 +38,33 @@ async def async_setup_entry(
     coordinator: AlloWT7Coordinator = hass.data[DOMAIN][entry.entry_id]
 
     door1_name = entry.data.get(CONF_DOOR1_NAME, DEFAULT_DOOR1_NAME)
-    entities = [AlloWT7Lock(coordinator, entry, 1, door1_name)]
-
+    entities: list[AlloWT7DoorButton] = [
+        AlloWT7DoorButton(coordinator, entry, lock_number=1, name=door1_name)
+    ]
     if entry.data.get(CONF_DOOR2_ENABLED, True):
         door2_name = entry.data.get(CONF_DOOR2_NAME, DEFAULT_DOOR2_NAME)
-        entities.append(AlloWT7Lock(coordinator, entry, 2, door2_name))
-
+        entities.append(
+            AlloWT7DoorButton(coordinator, entry, lock_number=2, name=door2_name)
+        )
     async_add_entities(entities)
 
 
-class AlloWT7Lock(LockEntity):
-    """A door controlled by the Allo wT7 monitor."""
+class AlloWT7DoorButton(ButtonEntity):
+    """A button that fires one open-door pulse on the wT7.
+
+    No state — the wT7 does not report whether the relay/gate is currently
+    triggered. The garage gate's motor is typically a toggle (open ↔ close);
+    the side door's lock is a momentary unlock (auto-closes by spring).
+    Either way, the user perception is "I pressed a button."
+    """
 
     _attr_has_entity_name = True
-    _attr_should_poll = False
 
     def __init__(
         self,
         coordinator: AlloWT7Coordinator,
         entry: ConfigEntry,
+        *,
         lock_number: int,
         name: str,
     ) -> None:
@@ -64,9 +72,12 @@ class AlloWT7Lock(LockEntity):
         self._entry = entry
         self._lock_number = lock_number
         self._attr_name = name
-        self._attr_unique_id = f"{entry.unique_id or entry.entry_id}_lock_{lock_number}"
-        self._is_locked = True
-        self._reset_task: asyncio.Task | None = None
+        self._attr_unique_id = f"{entry.unique_id or entry.entry_id}_button_{lock_number}"
+        # Icon hint (purely cosmetic)
+        if lock_number == 1:
+            self._attr_icon = "mdi:door-open"
+        else:
+            self._attr_icon = "mdi:garage-open-variant"
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -79,29 +90,7 @@ class AlloWT7Lock(LockEntity):
             serial_number=(dev.umid if dev else None),
         )
 
-    @property
-    def is_locked(self) -> bool:
-        return self._is_locked
-
-    async def async_unlock(self, **kwargs) -> None:
-        """Pulse the door open."""
+    async def async_press(self) -> None:
+        """Fire one open-door pulse."""
+        _LOGGER.debug("Pressing button for lock_number=%d", self._lock_number)
         await self._coordinator.async_open_door(self._lock_number)
-        self._is_locked = False
-        self.async_write_ha_state()
-        if self._reset_task and not self._reset_task.done():
-            self._reset_task.cancel()
-        self._reset_task = self.hass.async_create_task(self._reset_lock_state())
-
-    async def async_lock(self, **kwargs) -> None:
-        """The monitor has no close command; doors auto-close by spring.
-        Locking via UI just resets the feedback state."""
-        self._is_locked = True
-        self.async_write_ha_state()
-
-    async def _reset_lock_state(self) -> None:
-        try:
-            await asyncio.sleep(_UNLOCKED_FEEDBACK_SECONDS)
-            self._is_locked = True
-            self.async_write_ha_state()
-        except asyncio.CancelledError:
-            pass

@@ -1,0 +1,31 @@
+open_door:
+  name: Open door
+  description: >
+    Fires one open-door pulse on the wT7, for a given lock number.
+    Use this when you want an automation to be agnostic of which entities
+    are exposed (e.g. you only have one door, or you want to trigger
+    door 2 from an automation that knows the lock_number).
+  fields:
+    entry_id:
+      name: Config entry
+      description: >
+        The Allo wT7 integration entry ID. If you have only one wT7
+        configured, you can omit this and the integration will use it.
+      required: false
+      example: "01HXYZ..."
+      selector:
+        config_entry:
+          integration: allo_wt7
+    lock_number:
+      name: Lock number
+      description: >
+        Which relay to pulse on the wT7. 1 = social door, 2 = garage gate
+        (or whatever you mapped). Defaults to 1.
+      required: false
+      default: 1
+      example: 1
+      selector:
+        number:
+          min: 1
+          max: 4
+          mode: box
