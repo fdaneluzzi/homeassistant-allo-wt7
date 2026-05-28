@@ -46,6 +46,13 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# SSL context created once at import time (ssl.create_default_context() is a
+# blocking I/O call that reads system certs — it must NOT run inside the async
+# event loop). All LAN and cloud calls reuse this single context instance.
+_SSL_CTX_NO_VERIFY: ssl.SSLContext = ssl.create_default_context()
+_SSL_CTX_NO_VERIFY.check_hostname = False
+_SSL_CTX_NO_VERIFY.verify_mode = ssl.CERT_NONE
+
 
 class AlloWT7Error(Exception):
     """Base error for the Allo wT7 client."""
@@ -75,15 +82,8 @@ class DeviceInfo:
 
 
 def _ssl_no_verify() -> ssl.SSLContext:
-    """TLS context that does not verify the server certificate.
-
-    The cloud and the monitor use a self-signed certificate; we mirror
-    the official app's posture: TLS encryption on, verification off.
-    """
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-    return ctx
+    """Return the shared no-verify TLS context (created once at import time)."""
+    return _SSL_CTX_NO_VERIFY
 
 
 def _encode_device_password(pwd: str) -> str:
