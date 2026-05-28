@@ -17,6 +17,7 @@ import uuid
 import xml.etree.ElementTree as ET
 from collections import deque
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 
 import aiohttp
 
@@ -33,6 +34,7 @@ from .const import (
     ENVELOPE_VERSION,
     LAN_CGI_PATH,
     LAN_ERROR_AUTH_INVALID,
+    LAN_ERROR_NO_STORAGE,
     LAN_ERROR_OK,
     LAN_ERROR_WRONG_PIN,
     LAN_PASSWORDENCODE,
@@ -229,6 +231,117 @@ class AlloWT7Client:
         if err == LAN_ERROR_WRONG_PIN:
             return False
         raise AlloWT7Error(f"check_pin: unexpected error code {err!r}")
+
+    async def poll_last_picture(
+        self,
+        session: aiohttp.ClientSession,
+        monitor_ip: str,
+        oac: str,
+    ) -> tuple[str | None, str | None]:
+        """Return the filename of the most-recent picture stored on the device.
+
+        Uses the two-phase protocol: ``get.record.session`` to open a search
+        session, then ``get.record.message`` in a loop until the datalist is
+        empty.  The device ignores the time filter server-side so we send
+        today's window as a hint and do no client-side date filtering (we only
+        care about the *latest* filename, not which day it belongs to).
+
+        Returns:
+            (filename, None)  — success; filename may be None if no pictures.
+            (None, err_str)   — protocol/network error; caller should back off.
+        """
+        today_0 = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        tomorrow = today_0 + timedelta(days=1)
+        t0 = today_0.strftime("%Y-%m-%dT%H:%M:%S")
+        t1 = tomorrow.strftime("%Y-%m-%dT%H:%M:%S")
+
+        session_body = _build_lan_envelope(
+            oac,
+            "get.record.session",
+            (
+                "<record>"
+                "<filetype>picture</filetype>"
+                "<occurtype>all</occurtype>"
+                "<channels>1</channels>"
+                f"<starttime>{t0}</starttime>"
+                f"<endtime>{t1}</endtime>"
+                "<stream>all</stream>"
+                "</record>"
+            ),
+        )
+
+        url = f"https://{monitor_ip}{LAN_CGI_PATH}"
+        ctx = _ssl_no_verify()
+        headers = {
+            "Content-Type": "application/xml;charset=utf-8",
+            "User-Agent": USER_AGENT,
+        }
+        timeout = aiohttp.ClientTimeout(total=self._request_timeout_s)
+
+        try:
+            async with session.post(
+                url,
+                data=session_body.encode("utf-8"),
+                headers=headers,
+                ssl=ctx,
+                timeout=timeout,
+            ) as resp:
+                raw = await resp.read()
+        except Exception as exc:  # noqa: BLE001
+            return None, f"session request failed: {exc}"
+
+        env = _parse_envelope(raw)
+        if env is None:
+            return None, f"session: no envelope (raw={raw[:80]!r})"
+
+        err = env.findtext(".//error", "?")
+        if err == LAN_ERROR_NO_STORAGE:
+            return None, None  # device has no SD card / flash — not an error
+        if err != LAN_ERROR_OK:
+            return None, f"session error={err}"
+
+        sess_id = env.findtext(".//record/id", "")
+        if not sess_id:
+            return None, "session returned no id"
+
+        # Read pages until empty datalist
+        last_filename: str | None = None
+        last_starttime: str = ""
+
+        for _ in range(20):  # hard cap — device typically needs ≤3 pages
+            msg_body = _build_lan_envelope(
+                oac,
+                "get.record.message",
+                f"<record><id>{sess_id}</id></record>",
+            )
+            try:
+                async with session.post(
+                    url,
+                    data=msg_body.encode("utf-8"),
+                    headers=headers,
+                    ssl=ctx,
+                    timeout=timeout,
+                ) as resp:
+                    raw = await resp.read()
+            except Exception:  # noqa: BLE001
+                break  # use whatever we collected so far
+
+            env = _parse_envelope(raw)
+            if env is None:
+                break
+
+            datas = env.findall(".//data")
+            if not datas:
+                break  # empty datalist = no more pages
+
+            for d in datas:
+                st = d.findtext("starttime", "")
+                fn = (d.findtext("filename") or "").strip()
+                if fn and st >= last_starttime:
+                    last_starttime = st
+                    last_filename = fn
+
+        return last_filename, None
 
     # --- Internals ------------------------------------------------------------
 

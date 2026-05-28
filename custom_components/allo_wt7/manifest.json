@@ -1,7 +1,7 @@
 {
   "domain": "allo_wt7",
   "name": "Intelbras Allo wT7",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "documentation": "https://github.com/fdaneluzzi/homeassistant-allo-wt7",
   "issue_tracker": "https://github.com/fdaneluzzi/homeassistant-allo-wt7/issues",
   "codeowners": ["@fdaneluzzi"],

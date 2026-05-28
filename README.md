@@ -5,21 +5,20 @@
 
 Open the doors of your **Intelbras Allo wT7** video intercom from Home Assistant — over the local network, without keeping the official Allo Plus app running.
 
-> **Status: 0.2.0.** Door opening is working and validated against a real device (model `IDS9478AW`). Doorbell ring detection, two-way audio, and camera stream are **out of scope** for this version (see [Roadmap](#roadmap)).
->
-> ⚠️ **Breaking change in 0.2.0:** previously the integration exposed each door as a `lock` entity. The wT7 has no state sensor and the relay is a momentary pulse, so the lock model was inaccurate (especially for the garage gate, where each pulse toggles the motor in the opposite direction). Doors are now exposed as `button` entities. If you have automations referencing `lock.<door_name>`, update them to `button.<door_name>` (press action stays the same). See [Migrating to 0.2.0](#migrating-to-020).
+> **Status: 0.3.0.** Door opening and doorbell ring detection are working and validated against a real device (model `IDS9478AW`).  Two-way audio and camera stream are out of scope for now.
 
 ## Features
 
+- 🔔 **Doorbell ring detection** as a Home Assistant `event` entity — trigger any automation the moment someone rings the bell (typ. 2–3 s latency, pure LAN polling)
 - 🔘 **Open door(s)** as Home Assistant `button` entities (one press → one open pulse)
 - 🚪 **Dual-door support**: a wT7 typically controls a social door + a garage gate
 - 🛠️ **Service action** `allo_wt7.open_door` for automations that need to pass `lock_number` dynamically
-- 🌐 **Local-first**: the cloud is contacted only periodically to refresh credentials; every door-open is direct LAN
+- 🌐 **Local-first**: the cloud is contacted only on startup and every 12 h to refresh credentials; all doorbell polls and door-opens are direct LAN
 - 🔒 **Your password and PIN are stored encrypted by Home Assistant**, never transmitted in plaintext
 
 ## Requirements
 
-- Home Assistant 2024.6 or newer
+- Home Assistant 2023.8 or newer (for the `event` entity platform used by doorbell detection)
 - Intelbras Allo wT7 (or wT7 Lite) on your LAN, paired and working with the Allo Plus app
 - Your Allo Plus account email and password
 - The numeric unlock PIN that you set in the app the first time you opened a door
@@ -57,6 +56,7 @@ The integration is fully configured through the UI:
 | Door 2 enabled | Uncheck if your installation only has one door |
 
 After save, you get:
+- `event.campainha` — fires `ring` every time someone presses the doorbell
 - `button.<door1_name>`
 - `button.<door2_name>` (if enabled)
 
@@ -73,6 +73,45 @@ data:
 ```
 
 If you have multiple wT7 monitors configured, also pass `entry_id`.
+
+## Doorbell ring detection
+
+The wT7 saves one JPEG snapshot to its internal flash every time someone presses the bell.  The integration polls the device every **2 seconds** over the LAN and fires a Home Assistant `event` when a new picture appears.
+
+### The `event.campainha` entity
+
+- **Entity type:** `event` (HA 2023.8+)
+- **Event type:** `ring`
+- **Typical latency:** 2–3 s from physical ring to HA trigger (median ~800 ms poll round-trip on LAN)
+
+### Automation example
+
+```yaml
+automation:
+  - alias: "Notify on doorbell ring"
+    trigger:
+      - platform: event
+        event_type: allo_wt7_doorbell_ring
+    action:
+      - service: notify.mobile_app_my_phone
+        data:
+          title: "Campainha!"
+          message: "Alguém tocou a campainha."
+```
+
+Or use the entity trigger in the UI: **Automations → + → Trigger → Event entity** → select `event.campainha` → Event type `ring`.
+
+### Adaptive polling
+
+To avoid spamming the device right after a ring (when the Allo Plus app also connects), the integration automatically throttles to **10 s intervals for 30 s** after each detected ring, then returns to 2 s.
+
+### Configuring the poll interval
+
+In Settings → Devices & Services → Allo wT7 → **Configure**, you can:
+- Enable / disable doorbell detection entirely
+- Adjust the poll interval (1–30 s)
+
+Changes take effect after HA reloads the entry (done automatically when you save).
 
 ## Why `button` and not `lock`?
 
@@ -96,15 +135,18 @@ After updating to 0.2.0 in HACS, **remove and re-add the integration** in Settin
 │ allo_wt7 component │                │ /auth/user;jus_duplex=up|dn │
 └──────────┬─────────┘  (login → OAC) └─────────────────────────────┘
            │
-           │ HTTP(S) /tdkcgi with OAC + sha256(PIN)
-           ▼          (every lock.unlock call)
+           │  every 2 s: get.record.session + get.record.message (HTTPS)
+           │  every door-open: set.device.opendoor (HTTPS)
+           ▼
    ┌──────────────┐
-   │ wT7 monitor  │
+   │ wT7 monitor  │ ─── saves JPEG snapshot on each ring ───▶ internal flash
    │ (your LAN)   │
    └──────────────┘
 ```
 
-The cloud is contacted only to fetch the `out-auth-code` (OAC) — a per-device session credential. Once cached on disk, all opendoor calls are pure LAN.
+The cloud is contacted only to fetch the `out-auth-code` (OAC) — a per-device session credential that lasts ~12 h.  Once cached on disk, all doorbell polls and door-opens are pure LAN.
+
+**Doorbell detection mechanism:** the wT7 records one JPEG snapshot per ring.  HA polls the picture list every 2 s; when a new filename appears, it fires the `allo_wt7_doorbell_ring` bus event.  No cloud, no push notifications, no network sniffer required.
 
 ## Privacy & safety
 
@@ -120,8 +162,8 @@ The cloud is contacted only to fetch the `out-auth-code` (OAC) — a per-device 
 ## Roadmap
 
 - [x] 0.1.0 — Open doors (as `lock` entities — deprecated)
-- [x] 0.2.0 — Switch to `button` entities + service action (current)
-- [ ] Doorbell ring detection
+- [x] 0.2.0 — Switch to `button` entities + service action
+- [x] 0.3.0 — Doorbell ring detection via `event` entity (current)
 - [ ] Camera snapshot
 - [ ] Two-way audio
 - [ ] Push to HACS default repositories

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 DOMAIN = "allo_wt7"
-PLATFORMS = ["button"]
+PLATFORMS = ["button", "event"]
 
 MANUFACTURER = "Intelbras"
 MODEL = "Allo wT7"
@@ -59,7 +59,15 @@ LAN_ERROR_OK = "0"
 LAN_ERROR_COMMAND_UNKNOWN = "-1"
 LAN_ERROR_WRONG_PIN = "-3"
 LAN_ERROR_NOT_SUPPORTED = "-10"
+LAN_ERROR_NO_STORAGE = "-15"
 LAN_ERROR_AUTH_INVALID = "401"
+
+# --- Doorbell
+CONF_DOORBELL_ENABLED = "doorbell_enabled"
+CONF_DOORBELL_POLL_INTERVAL = "doorbell_poll_interval_s"
+DEFAULT_DOORBELL_ENABLED = True
+DEFAULT_DOORBELL_POLL_INTERVAL = 2.0
+EVENT_DOORBELL_RING = f"{DOMAIN}_doorbell_ring"
 
 # --- Services
 SERVICE_OPEN_DOOR = "open_door"

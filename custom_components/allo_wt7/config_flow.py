@@ -7,6 +7,7 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant import config_entries
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.data_entry_flow import FlowResult
 
@@ -22,10 +23,14 @@ from .const import (
     CONF_DOOR1_NAME,
     CONF_DOOR2_ENABLED,
     CONF_DOOR2_NAME,
+    CONF_DOORBELL_ENABLED,
+    CONF_DOORBELL_POLL_INTERVAL,
     CONF_MONITOR_IP,
     CONF_UNLOCK_PIN,
     DEFAULT_DOOR1_NAME,
     DEFAULT_DOOR2_NAME,
+    DEFAULT_DOORBELL_ENABLED,
+    DEFAULT_DOORBELL_POLL_INTERVAL,
     DOMAIN,
 )
 
@@ -44,10 +49,49 @@ SCHEMA = vol.Schema(
 )
 
 
+OPTIONS_SCHEMA = vol.Schema(
+    {
+        vol.Optional(CONF_DOORBELL_ENABLED, default=DEFAULT_DOORBELL_ENABLED): bool,
+        vol.Optional(
+            CONF_DOORBELL_POLL_INTERVAL, default=DEFAULT_DOORBELL_POLL_INTERVAL
+        ): vol.All(vol.Coerce(float), vol.Range(min=1.0, max=30.0)),
+    }
+)
+
+
+class AlloWT7OptionsFlow(config_entries.OptionsFlow):
+    """Options flow for Allo wT7 (doorbell settings)."""
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        current = {
+            CONF_DOORBELL_ENABLED: self.config_entry.options.get(
+                CONF_DOORBELL_ENABLED, DEFAULT_DOORBELL_ENABLED
+            ),
+            CONF_DOORBELL_POLL_INTERVAL: self.config_entry.options.get(
+                CONF_DOORBELL_POLL_INTERVAL, DEFAULT_DOORBELL_POLL_INTERVAL
+            ),
+        }
+        return self.async_show_form(
+            step_id="init",
+            data_schema=self.add_suggested_values_to_schema(OPTIONS_SCHEMA, current),
+        )
+
+
 class AlloWT7ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle the config flow for Allo wT7."""
 
     VERSION = 1
+
+    @staticmethod
+    @config_entries.callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> AlloWT7OptionsFlow:
+        """Return the options flow handler."""
+        return AlloWT7OptionsFlow()
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None

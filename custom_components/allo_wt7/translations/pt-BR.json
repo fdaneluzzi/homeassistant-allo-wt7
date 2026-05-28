@@ -24,5 +24,16 @@
     "abort": {
       "already_configured": "Este dispositivo já está configurado."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Configurações da campainha",
+        "data": {
+          "doorbell_enabled": "Ativar detecção de campainha",
+          "doorbell_poll_interval_s": "Intervalo de consulta em segundos (1–30)"
+        }
+      }
+    }
   }
 }

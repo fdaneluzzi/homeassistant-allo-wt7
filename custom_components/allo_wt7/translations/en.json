@@ -24,5 +24,16 @@
     "abort": {
       "already_configured": "This device is already configured."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Doorbell settings",
+        "data": {
+          "doorbell_enabled": "Enable doorbell detection",
+          "doorbell_poll_interval_s": "Poll interval in seconds (1–30)"
+        }
+      }
+    }
   }
 }
