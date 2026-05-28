@@ -1,0 +1,6 @@
+{
+  "name": "Intelbras Allo wT7",
+  "render_readme": true,
+  "homeassistant": "2024.6.0",
+  "country": ["BR"]
+}

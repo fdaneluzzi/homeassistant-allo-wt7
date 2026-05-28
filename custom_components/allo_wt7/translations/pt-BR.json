@@ -1,0 +1,28 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Intelbras Allo wT7",
+        "description": "Conecte o Home Assistant ao seu videoporteiro Intelbras Allo wT7.\n\nVocê vai precisar de:\n- Email e senha da sua conta Allo Plus\n- A senha numérica de abertura que você definiu no app na primeira vez\n- O IP local do monitor wT7 na sua rede\n\nApós configurar, cada porta vira uma entidade `button.*` no HA. Cada clique dispara um pulso de abertura no relé do wT7. (Portões de garagem geralmente alternam: um segundo clique fecha.)",
+        "data": {
+          "email": "Email (conta Allo Plus)",
+          "password": "Senha (conta Allo Plus)",
+          "monitor_ip": "IP do monitor na rede local",
+          "unlock_pin": "PIN numérico de abertura",
+          "door1_name": "Nome da porta 1",
+          "door2_enabled": "Dispositivo tem segunda porta",
+          "door2_name": "Nome da porta 2"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Email ou senha do Allo Plus inválidos.",
+      "invalid_pin": "PIN numérico não bate com o configurado no dispositivo.",
+      "cannot_connect": "Não foi possível conectar à nuvem Allo Plus ou ao monitor.",
+      "unknown": "Erro inesperado. Veja o log do Home Assistant para detalhes."
+    },
+    "abort": {
+      "already_configured": "Este dispositivo já está configurado."
+    }
+  }
+}
