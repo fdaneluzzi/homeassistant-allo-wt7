@@ -57,6 +57,36 @@ _LOGGER = logging.getLogger(__name__)
 
 STORE_VERSION = 1
 
+# --- Doorbell false-ring hardening -------------------------------------------
+# The wT7 intermittently returns a TRUNCATED record list (a prefix of the full
+# set, missing the newest pictures — observed 40 of 57 on a cold read).  The
+# original "filename changed == ring" logic fired every time the computed newest
+# filename oscillated between a truncated and a complete read, producing rings
+# for pictures that were days old with nobody at the door.
+#
+# Fix: track a monotonic high-water mark by picture *starttime* and only fire on
+# a strictly-newer record.  A truncated read can only ever drop at/below the
+# mark, never exceed it, so it can never advance the mark or fire — the
+# oscillation is gone.  This is deliberately TIMEZONE-AGNOSTIC: it compares the
+# device's own fixed-width starttime strings against each other (lexical compare
+# == chronological for 'YYYY-MM-DDtHH:MM:SSz') and never against host wall-clock.
+# (An earlier draft used an absolute "is this picture recent?" check, but the
+# wT7 runs on GMT-03:00 and its picture-stamp timezone could not be verified, so
+# any absolute-time check risked silently suppressing EVERY real ring — strictly
+# worse than the bug being fixed.)
+#
+# Startup baseline: a "stability warmup" establishes the high-water mark without
+# firing.  It tracks the running max starttime and locks the baseline once that
+# max stops climbing for STABLE_READS consecutive reads (so a truncated first
+# read can't set a low baseline — the max climbs to the true newest on the next
+# full read, then settles), bounded by MAX_POLLS so a flaky device can't stall
+# warmup forever.  State is in-memory and re-warms on each restart; a doorbell
+# pressed during the brief (~6-30 s) warmup is absorbed into the baseline and
+# not notified (acceptable for a home doorbell, and avoids restored-state false
+# notifications on restart).
+DOORBELL_WARMUP_STABLE_READS = 3  # consecutive non-increasing reads -> lock baseline
+DOORBELL_WARMUP_MAX_POLLS = 15    # hard cap on warmup reads (flaky-device backstop)
+
 
 class AlloWT7Coordinator(DataUpdateCoordinator):
     """Owns the OAC cache, exposes open_door() and doorbell ring detection."""
@@ -79,6 +109,14 @@ class AlloWT7Coordinator(DataUpdateCoordinator):
         # Doorbell polling state
         self._doorbell_task: asyncio.Task | None = None
         self._last_picture_filename: str | None = None
+        # Monotonic high-water mark by picture starttime (lexical compare works:
+        # fixed-width 'YYYY-MM-DDtHH:MM:SSz').  Empty string sorts below any real
+        # timestamp.  Only ever increases.  See _doorbell_poll_loop for the rules.
+        self._high_water_starttime: str = ""
+        # Stability-warmup state (establishes the baseline without firing).
+        self._doorbell_baseline_locked: bool = False
+        self._warmup_stable_reads: int = 0
+        self._warmup_polls: int = 0
 
         session = async_get_clientsession(hass)
         self._client = AlloWT7Client(
@@ -117,7 +155,11 @@ class AlloWT7Coordinator(DataUpdateCoordinator):
         await self._save()
 
         if self._opt(CONF_DOORBELL_ENABLED, DEFAULT_DOORBELL_ENABLED):
-            self._doorbell_task = self._hass.async_create_task(
+            # background task (NOT awaited during bootstrap; auto-cancelled on
+            # entry unload) — an infinite poll loop under async_create_task blocks
+            # HA's startup phase and logs "waiting for tasks" warnings.
+            self._doorbell_task = self._entry.async_create_background_task(
+                self._hass,
                 self._doorbell_poll_loop(),
                 name=f"{DOMAIN}_doorbell_{self._entry.entry_id}",
             )
@@ -244,7 +286,7 @@ class AlloWT7Coordinator(DataUpdateCoordinator):
                     consecutive_errors += 1
                     continue
 
-                filename, err = await self._client.poll_last_picture(
+                filename, starttime, err = await self._client.poll_last_picture(
                     session,
                     self._data[CONF_MONITOR_IP],
                     oac,
@@ -272,19 +314,63 @@ class AlloWT7Coordinator(DataUpdateCoordinator):
 
                 consecutive_errors = 0
 
-                if filename and filename != self._last_picture_filename:
-                    prev = self._last_picture_filename
-                    self._last_picture_filename = filename
-                    if prev is None:
-                        # First poll after startup — establish baseline, no event
-                        _LOGGER.debug("Doorbell baseline picture: %s", filename)
+                # No usable picture this poll (empty/heavily-truncated read, or a
+                # device with no storage) -> nothing to do; never lower the mark.
+                if not filename or not starttime:
+                    continue
+
+                if not self._doorbell_baseline_locked:
+                    # Stability warmup: climb the running max to the true newest
+                    # picture, then lock once it stops climbing for STABLE_READS
+                    # consecutive reads.  A truncated read can only fail to climb
+                    # (it never exceeds the true max), so it just counts toward
+                    # stability rather than corrupting the baseline.  Never fires.
+                    self._warmup_polls += 1
+                    if starttime > self._high_water_starttime:
+                        self._high_water_starttime = starttime
+                        self._last_picture_filename = filename
+                        self._warmup_stable_reads = 0
                     else:
-                        _LOGGER.info("Doorbell ring detected (new picture %s)", filename)
-                        throttle_until = time.monotonic() + throttle_window
-                        self._hass.bus.async_fire(
-                            EVENT_DOORBELL_RING,
-                            {"filename": filename},
+                        self._warmup_stable_reads += 1
+                    if (
+                        self._warmup_stable_reads >= DOORBELL_WARMUP_STABLE_READS
+                        or self._warmup_polls >= DOORBELL_WARMUP_MAX_POLLS
+                    ):
+                        self._doorbell_baseline_locked = True
+                        _LOGGER.info(
+                            "Doorbell baseline locked at %s after %d poll(s)",
+                            self._high_water_starttime,
+                            self._warmup_polls,
                         )
+                    else:
+                        _LOGGER.debug(
+                            "Doorbell warmup: high-water=%s stable=%d/%d poll=%d",
+                            self._high_water_starttime,
+                            self._warmup_stable_reads,
+                            DOORBELL_WARMUP_STABLE_READS,
+                            self._warmup_polls,
+                        )
+                    continue
+
+                if starttime > self._high_water_starttime:
+                    # Strictly newer than the locked baseline (and than every
+                    # picture seen since) -> a genuinely new record appeared ->
+                    # a real ring.  Advance the mark (monotonic, never lowered).
+                    self._high_water_starttime = starttime
+                    self._last_picture_filename = filename
+                    _LOGGER.info(
+                        "Doorbell ring detected (new picture %s @ %s)",
+                        filename,
+                        starttime,
+                    )
+                    throttle_until = time.monotonic() + throttle_window
+                    self._hass.bus.async_fire(
+                        EVENT_DOORBELL_RING,
+                        {"filename": filename, "starttime": starttime},
+                    )
+                # else: starttime <= high-water -> truncated/stale/duplicate read.
+                # Ignore it and keep the mark; this is the case that used to
+                # generate false rings.
 
             except asyncio.CancelledError:
                 _LOGGER.debug("Doorbell poll loop cancelled")
