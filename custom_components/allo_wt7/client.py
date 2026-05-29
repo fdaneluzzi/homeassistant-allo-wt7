@@ -481,7 +481,10 @@ class AlloWT7Client:
         The monitor's HTTP port is closed when idle and reopens on activity;
         we retry once after a short delay.
         """
-        schemes = [scheme] if scheme == "https" else [scheme, "https"]
+        # https-first: many wT7 units (e.g. IDS94B1W) are https-only and *filter*
+        # port 80 (SYN dropped -> full-timeout hang) rather than refusing it, which
+        # tar-pits an http-first probe for request_timeout_s on every LAN call.
+        schemes = ["https"] if scheme == "https" else ["https", scheme]
         last_exc: Exception | None = None
 
         for attempt in range(2):
