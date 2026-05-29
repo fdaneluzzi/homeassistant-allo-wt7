@@ -117,7 +117,11 @@ class AlloWT7Coordinator(DataUpdateCoordinator):
         await self._save()
 
         if self._opt(CONF_DOORBELL_ENABLED, DEFAULT_DOORBELL_ENABLED):
-            self._doorbell_task = self._hass.async_create_task(
+            # background task (NOT awaited during bootstrap; auto-cancelled on
+            # entry unload) — an infinite poll loop under async_create_task blocks
+            # HA's startup phase and logs "waiting for tasks" warnings.
+            self._doorbell_task = self._entry.async_create_background_task(
+                self._hass,
                 self._doorbell_poll_loop(),
                 name=f"{DOMAIN}_doorbell_{self._entry.entry_id}",
             )
