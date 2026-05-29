@@ -237,18 +237,26 @@ class AlloWT7Client:
         session: aiohttp.ClientSession,
         monitor_ip: str,
         oac: str,
-    ) -> tuple[str | None, str | None]:
-        """Return the filename of the most-recent picture stored on the device.
+    ) -> tuple[str | None, str | None, str | None]:
+        """Return the (filename, starttime) of the most-recent picture stored.
 
         Uses the two-phase protocol: ``get.record.session`` to open a search
         session, then ``get.record.message`` in a loop until the datalist is
         empty.  The device ignores the time filter server-side so we send
         today's window as a hint and do no client-side date filtering (we only
-        care about the *latest* filename, not which day it belongs to).
+        care about the *latest* record, not which day it belongs to).
+
+        IMPORTANT: the device intermittently returns a *truncated* record list
+        — a prefix of the full set, missing the newest entries (observed: 40 of
+        57 records on a cold read).  Records come back oldest-first, so a
+        truncated read yields an *older* max starttime.  Callers MUST therefore
+        treat ``starttime`` as a high-water mark and only act on a *strictly
+        newer* value; never on a mere change of filename, which oscillates as
+        reads alternate between truncated and complete.
 
         Returns:
-            (filename, None)  — success; filename may be None if no pictures.
-            (None, err_str)   — protocol/network error; caller should back off.
+            (filename, starttime, None) — success; both None if no pictures.
+            (None, None, err_str)       — protocol/network error; back off.
         """
         today_0 = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
         tomorrow = today_0 + timedelta(days=1)
@@ -288,21 +296,21 @@ class AlloWT7Client:
             ) as resp:
                 raw = await resp.read()
         except Exception as exc:  # noqa: BLE001
-            return None, f"session request failed: {exc}"
+            return None, None, f"session request failed: {exc}"
 
         env = _parse_envelope(raw)
         if env is None:
-            return None, f"session: no envelope (raw={raw[:80]!r})"
+            return None, None, f"session: no envelope (raw={raw[:80]!r})"
 
         err = env.findtext(".//error", "?")
         if err == LAN_ERROR_NO_STORAGE:
-            return None, None  # device has no SD card / flash — not an error
+            return None, None, None  # device has no SD card / flash — not an error
         if err != LAN_ERROR_OK:
-            return None, f"session error={err}"
+            return None, None, f"session error={err}"
 
         sess_id = env.findtext(".//record/id", "")
         if not sess_id:
-            return None, "session returned no id"
+            return None, None, "session returned no id"
 
         # Read pages until empty datalist
         last_filename: str | None = None
@@ -335,13 +343,24 @@ class AlloWT7Client:
                 break  # empty datalist = no more pages
 
             for d in datas:
-                st = d.findtext("starttime", "")
+                st = (d.findtext("starttime") or "").strip()
                 fn = (d.findtext("filename") or "").strip()
-                if fn and st >= last_starttime:
+                # Skip records with no starttime explicitly — otherwise an empty
+                # "" would lose to the seeded "" under the comparison below and a
+                # real record could vanish (the whole bug is a device that emits
+                # malformed/truncated data, so empty fields are plausible).
+                # Strict ">" (plus the last_filename-is-None seed) makes the
+                # *first* record at the max starttime win, so the returned
+                # filename is deterministic when several pictures share one ring
+                # timestamp (the device stores a short burst per ring, differing
+                # only by trailing sequence number).
+                if not fn or not st:
+                    continue
+                if last_filename is None or st > last_starttime:
                     last_starttime = st
                     last_filename = fn
 
-        return last_filename, None
+        return last_filename, (last_starttime or None), None
 
     # --- Internals ------------------------------------------------------------
 
