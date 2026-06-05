@@ -17,7 +17,7 @@
     },
     "error": {
       "invalid_auth": "Invalid Allo Plus email or password.",
-      "invalid_pin": "Unlock PIN does not match the value configured on the device.",
+      "invalid_pin": "The unlock PIN does not match the device. Use the numeric door-opening PIN you set in the Allo Plus app (not your account login password). If you never set one, configure it in the app first.",
       "cannot_connect": "Cannot reach the Allo Plus cloud or the monitor.",
       "unknown": "Unexpected error. See Home Assistant log for details."
     },
