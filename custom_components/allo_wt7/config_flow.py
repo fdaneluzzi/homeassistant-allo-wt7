@@ -99,6 +99,13 @@ class AlloWT7ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
+            # Trim stray whitespace the user (or a mobile keyboard/paste) may
+            # have introduced. A trailing space silently changes the PIN's
+            # SHA-256 and is a common cause of a spurious "invalid_pin".
+            for key in (CONF_EMAIL, CONF_MONITOR_IP, CONF_UNLOCK_PIN):
+                if isinstance(user_input.get(key), str):
+                    user_input[key] = user_input[key].strip()
+
             try:
                 from homeassistant.helpers.aiohttp_client import (
                     async_get_clientsession,
@@ -112,12 +119,21 @@ class AlloWT7ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     user_input[CONF_EMAIL], user_input[CONF_PASSWORD]
                 )
                 # Verify PIN against device (read-only)
+                raw_pin = user_input[CONF_UNLOCK_PIN]
                 ok = await client.check_pin(
                     monitor_ip=user_input[CONF_MONITOR_IP],
                     oac=oac,
-                    unlock_pin=user_input[CONF_UNLOCK_PIN],
+                    unlock_pin=raw_pin,
                 )
                 if not ok:
+                    # PII-safe diagnostics: never log the PIN itself, only its
+                    # shape, so a user's debug log can distinguish "wrong PIN"
+                    # from formatting issues without leaking the secret.
+                    _LOGGER.debug(
+                        "Device rejected unlock PIN: length=%d, digits_only=%s",
+                        len(raw_pin),
+                        raw_pin.isdigit(),
+                    )
                     errors[CONF_UNLOCK_PIN] = "invalid_pin"
                 else:
                     await self.async_set_unique_id(info.umid)

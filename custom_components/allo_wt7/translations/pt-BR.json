@@ -17,7 +17,7 @@
     },
     "error": {
       "invalid_auth": "Email ou senha do Allo Plus inválidos.",
-      "invalid_pin": "PIN numérico não bate com o configurado no dispositivo.",
+      "invalid_pin": "A senha de abertura não bate com a do dispositivo. Use a senha numérica de abertura definida no app Allo Plus (não a senha de login da conta). Se nunca a definiu, configure-a no app primeiro.",
       "cannot_connect": "Não foi possível conectar à nuvem Allo Plus ou ao monitor.",
       "unknown": "Erro inesperado. Veja o log do Home Assistant para detalhes."
     },
