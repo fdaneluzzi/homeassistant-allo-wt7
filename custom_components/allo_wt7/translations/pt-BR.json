@@ -8,15 +8,21 @@
           "email": "Email (conta Allo Plus)",
           "password": "Senha (conta Allo Plus)",
           "monitor_ip": "IP do monitor na rede local",
+          "require_pin": "Dispositivo exige senha de abertura",
           "unlock_pin": "PIN numérico de abertura",
           "door1_name": "Nome da porta 1",
           "door2_enabled": "Dispositivo tem segunda porta",
           "door2_name": "Nome da porta 2"
+        },
+        "data_description": {
+          "require_pin": "Deixe marcado (padrão). Desmarque apenas se o seu modelo abre a porta sem senha — nesse caso o campo abaixo é ignorado.",
+          "unlock_pin": "A senha numérica de abertura definida no app/porteiro. Ignorado se a opção acima estiver desmarcada."
         }
       }
     },
     "error": {
       "invalid_auth": "Email ou senha do Allo Plus inválidos.",
+      "pin_required": "Informe a senha de abertura, ou desmarque \"Dispositivo exige senha de abertura\" se o seu modelo abre sem senha.",
       "invalid_pin": "A senha de abertura não bate com a do dispositivo. Use a senha numérica de abertura definida no app Allo Plus (não a senha de login da conta). Se nunca a definiu, configure-a no app primeiro.",
       "cannot_connect": "Não foi possível conectar à nuvem Allo Plus ou ao monitor.",
       "unknown": "Erro inesperado. Veja o log do Home Assistant para detalhes."
