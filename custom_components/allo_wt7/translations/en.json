@@ -8,15 +8,21 @@
           "email": "Email (Allo Plus account)",
           "password": "Password (Allo Plus account)",
           "monitor_ip": "Monitor IP address on local network",
+          "require_pin": "Device requires an unlock PIN",
           "unlock_pin": "Numeric unlock PIN",
           "door1_name": "Name of door 1",
           "door2_enabled": "Device has a second door",
           "door2_name": "Name of door 2"
+        },
+        "data_description": {
+          "require_pin": "Leave enabled (default). Disable only if your model opens the door without a PIN — the field below is then ignored.",
+          "unlock_pin": "The numeric unlock PIN set in the app/intercom. Ignored if the option above is disabled."
         }
       }
     },
     "error": {
       "invalid_auth": "Invalid Allo Plus email or password.",
+      "pin_required": "Enter the unlock PIN, or turn off \"Device requires an unlock PIN\" if your model opens without one.",
       "invalid_pin": "The unlock PIN does not match the device. Use the numeric door-opening PIN you set in the Allo Plus app (not your account login password). If you never set one, configure it in the app first.",
       "cannot_connect": "Cannot reach the Allo Plus cloud or the monitor.",
       "unknown": "Unexpected error. See Home Assistant log for details."

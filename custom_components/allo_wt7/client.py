@@ -192,7 +192,7 @@ class AlloWT7Client:
         self,
         monitor_ip: str,
         oac: str,
-        unlock_pin: str,
+        unlock_pin: str | None,
         *,
         lock_number: int = 1,
         scheme: str = "http",
@@ -203,7 +203,9 @@ class AlloWT7Client:
             monitor_ip: Local IP of the wT7 monitor.
             oac: Out-auth-code obtained from fetch_oac.
             unlock_pin: The numeric PIN the user set in the app on first
-                use. Will be SHA-256 hex'd before being sent.
+                use. Will be SHA-256 hex'd before being sent. Pass None (or
+                empty) for devices configured without an unlock PIN — the
+                password element is then omitted and the door opens on the OAC.
             lock_number: 1 for the social door (default), 2 for the gate, ...
             scheme: "http" or "https". We try http first then fall back.
         """
@@ -473,17 +475,18 @@ class AlloWT7Client:
         self,
         monitor_ip: str,
         oac: str,
-        unlock_pin: str,
+        unlock_pin: str | None,
         lock_number: int,
         scheme: str,
     ) -> None:
-        encoded = _encode_device_password(unlock_pin)
-        body = _build_lan_envelope(
-            oac,
-            "set.device.opendoor",
-            f"<door>1</door><locknumber>{lock_number}</locknumber>"
-            f"<password>{encoded}</password>",
-        )
+        content = f"<door>1</door><locknumber>{lock_number}</locknumber>"
+        # Only include the password element when a PIN is configured. Devices
+        # set up with "device requires no unlock PIN" open with the OAC alone;
+        # sending an empty/garbage hash would otherwise be rejected. When a PIN
+        # *is* present the emitted bytes are identical to before.
+        if unlock_pin:
+            content += f"<password>{_encode_device_password(unlock_pin)}</password>"
+        body = _build_lan_envelope(oac, "set.device.opendoor", content)
         err = await self._post_lan(monitor_ip, body, scheme)
         if err == LAN_ERROR_OK:
             return

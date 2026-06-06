@@ -26,6 +26,7 @@ from .const import (
     CONF_DOORBELL_ENABLED,
     CONF_DOORBELL_POLL_INTERVAL,
     CONF_MONITOR_IP,
+    CONF_REQUIRE_PIN,
     CONF_UNLOCK_PIN,
     DEFAULT_DOOR1_NAME,
     DEFAULT_DOOR2_NAME,
@@ -41,7 +42,8 @@ SCHEMA = vol.Schema(
         vol.Required(CONF_EMAIL): str,
         vol.Required(CONF_PASSWORD): str,
         vol.Required(CONF_MONITOR_IP): str,
-        vol.Required(CONF_UNLOCK_PIN): str,
+        vol.Required(CONF_REQUIRE_PIN, default=True): bool,
+        vol.Optional(CONF_UNLOCK_PIN, default=""): str,
         vol.Optional(CONF_DOOR1_NAME, default=DEFAULT_DOOR1_NAME): str,
         vol.Optional(CONF_DOOR2_ENABLED, default=True): bool,
         vol.Optional(CONF_DOOR2_NAME, default=DEFAULT_DOOR2_NAME): str,
@@ -106,51 +108,64 @@ class AlloWT7ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if isinstance(user_input.get(key), str):
                     user_input[key] = user_input[key].strip()
 
-            try:
-                from homeassistant.helpers.aiohttp_client import (
-                    async_get_clientsession,
-                )
+            require_pin = user_input.get(CONF_REQUIRE_PIN, True)
+            raw_pin = user_input.get(CONF_UNLOCK_PIN, "")
+            # Precedence: when the device is marked as not requiring a PIN, any
+            # value typed in the PIN field is ignored and not persisted.
+            if not require_pin:
+                user_input[CONF_UNLOCK_PIN] = ""
+            elif not raw_pin:
+                # PIN required but left blank.
+                errors[CONF_UNLOCK_PIN] = "pin_required"
 
-                session = async_get_clientsession(self.hass)
-                client = AlloWT7Client(session, client_id=generate_client_id())
-
-                # Test cloud login + retrieve OAC
-                oac, info = await client.fetch_oac(
-                    user_input[CONF_EMAIL], user_input[CONF_PASSWORD]
-                )
-                # Verify PIN against device (read-only)
-                raw_pin = user_input[CONF_UNLOCK_PIN]
-                ok = await client.check_pin(
-                    monitor_ip=user_input[CONF_MONITOR_IP],
-                    oac=oac,
-                    unlock_pin=raw_pin,
-                )
-                if not ok:
-                    # PII-safe diagnostics: never log the PIN itself, only its
-                    # shape, so a user's debug log can distinguish "wrong PIN"
-                    # from formatting issues without leaking the secret.
-                    _LOGGER.debug(
-                        "Device rejected unlock PIN: length=%d, digits_only=%s",
-                        len(raw_pin),
-                        raw_pin.isdigit(),
+            if not errors:
+                try:
+                    from homeassistant.helpers.aiohttp_client import (
+                        async_get_clientsession,
                     )
+
+                    session = async_get_clientsession(self.hass)
+                    client = AlloWT7Client(session, client_id=generate_client_id())
+
+                    # Test cloud login + retrieve OAC
+                    oac, info = await client.fetch_oac(
+                        user_input[CONF_EMAIL], user_input[CONF_PASSWORD]
+                    )
+
+                    ok = True
+                    if require_pin:
+                        # Verify PIN against device (read-only)
+                        ok = await client.check_pin(
+                            monitor_ip=user_input[CONF_MONITOR_IP],
+                            oac=oac,
+                            unlock_pin=raw_pin,
+                        )
+                    if not ok:
+                        # PII-safe diagnostics: never log the PIN itself, only
+                        # its shape, so a user's debug log can distinguish
+                        # "wrong PIN" from formatting issues without leaking it.
+                        _LOGGER.debug(
+                            "Device rejected unlock PIN: length=%d, digits_only=%s",
+                            len(raw_pin),
+                            raw_pin.isdigit(),
+                        )
+                        errors[CONF_UNLOCK_PIN] = "invalid_pin"
+                    else:
+                        await self.async_set_unique_id(info.umid)
+                        self._abort_if_unique_id_configured()
+                        return self.async_create_entry(
+                            title=info.name or f"Allo wT7 ({info.umid[:8]})",
+                            data=user_input,
+                        )
+                except AlloWT7AuthError:
+                    errors["base"] = "invalid_auth"
+                except AlloWT7ConnectionError:
+                    errors["base"] = "cannot_connect"
+                except AlloWT7WrongPinError:
                     errors[CONF_UNLOCK_PIN] = "invalid_pin"
-                else:
-                    await self.async_set_unique_id(info.umid)
-                    self._abort_if_unique_id_configured()
-                    return self.async_create_entry(
-                        title=info.name or f"Allo wT7 ({info.umid[:8]})",
-                        data=user_input,
-                    )
-            except AlloWT7AuthError:
-                errors["base"] = "invalid_auth"
-            except AlloWT7ConnectionError:
-                errors["base"] = "cannot_connect"
-            except AlloWT7WrongPinError:
-                errors[CONF_UNLOCK_PIN] = "invalid_pin"
-            except AlloWT7Error as err:
-                _LOGGER.exception("Unexpected error during setup: %s", err)
-                errors["base"] = "unknown"
+                except AlloWT7Error as err:
+                    _LOGGER.exception("Unexpected error during setup: %s", err)
+                    errors["base"] = "unknown"
 
         return self.async_show_form(
             step_id="user", data_schema=SCHEMA, errors=errors

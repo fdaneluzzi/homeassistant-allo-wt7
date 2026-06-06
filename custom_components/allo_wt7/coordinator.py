@@ -41,6 +41,7 @@ from .const import (
     CONF_OAC_CACHE_TTL,
     CONF_PASSWORD,
     CONF_REQUEST_TIMEOUT,
+    CONF_REQUIRE_PIN,
     CONF_UNLOCK_PIN,
     DEFAULT_DOORBELL_ENABLED,
     DEFAULT_DOORBELL_POLL_INTERVAL,
@@ -213,13 +214,20 @@ class AlloWT7Coordinator(DataUpdateCoordinator):
 
     async def async_open_door(self, lock_number: int) -> None:
         """Open the given door (1 = social, 2 = gate, ...)."""
+        # Entries created before the optional-PIN feature have no
+        # CONF_REQUIRE_PIN key — default True so they keep sending the PIN.
+        unlock_pin = (
+            self._data.get(CONF_UNLOCK_PIN)
+            if self._data.get(CONF_REQUIRE_PIN, True)
+            else None
+        )
         for attempt in range(2):
             oac = await self._ensure_oac(force_refresh=(attempt == 1))
             try:
                 await self._client.open_door(
                     monitor_ip=self._data[CONF_MONITOR_IP],
                     oac=oac,
-                    unlock_pin=self._data[CONF_UNLOCK_PIN],
+                    unlock_pin=unlock_pin,
                     lock_number=lock_number,
                 )
                 return
@@ -381,6 +389,10 @@ class AlloWT7Coordinator(DataUpdateCoordinator):
 
     async def async_validate(self) -> None:
         """Used by config flow: fetch OAC and verify PIN against the device."""
+        # Nothing to validate when the device is configured without a PIN.
+        if not self._data.get(CONF_REQUIRE_PIN, True):
+            await self._ensure_oac(force_refresh=True)
+            return
         oac = await self._ensure_oac(force_refresh=True)
         try:
             ok = await self._client.check_pin(
