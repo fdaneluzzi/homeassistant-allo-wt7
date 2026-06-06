@@ -23,6 +23,23 @@ Open the doors of your **Intelbras Allo wT7** video intercom from Home Assistant
 - Your Allo Plus account email and password
 - The numeric unlock PIN that you set in the app the first time you opened a door
 
+## Unsupported models
+
+The integration was reverse-engineered against the **`IDS9478AW`**. Some wT7
+variants ship firmware that speaks a **different LAN protocol dialect** and are
+**not currently supported**:
+
+- **`IDS9478W`** — cloud login works, but the device rejects the door-open
+  (`set.device.opendoor`) and doorbell (`get.record.session`) commands with LAN
+  error `-1` ("command unknown"). The integration now reports a clean error and
+  disables doorbell polling on such devices instead of retrying.
+
+If your model returns `-1`/`-10` errors, supporting it requires capturing the
+official Allo Plus app's LAN traffic (e.g. with mitmproxy) while opening a door,
+so the real command names/format can be mapped. Contributions welcome — please
+[open an issue](https://github.com/fdaneluzzi/homeassistant-allo-wt7/issues)
+with the capture (redact your PIN/OAC/credentials first).
+
 ## Install via HACS
 
 1. In HACS → Integrations → ⋮ → Custom repositories
