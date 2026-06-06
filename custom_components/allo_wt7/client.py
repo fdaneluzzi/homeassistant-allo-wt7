@@ -34,7 +34,9 @@ from .const import (
     ENVELOPE_VERSION,
     LAN_CGI_PATH,
     LAN_ERROR_AUTH_INVALID,
+    LAN_ERROR_COMMAND_UNKNOWN,
     LAN_ERROR_NO_STORAGE,
+    LAN_ERROR_NOT_SUPPORTED,
     LAN_ERROR_OK,
     LAN_ERROR_WRONG_PIN,
     LAN_PASSWORDENCODE,
@@ -68,6 +70,14 @@ class AlloWT7ConnectionError(AlloWT7Error):
 
 class AlloWT7WrongPinError(AlloWT7Error):
     """The unlock PIN configured in HA does not match the device."""
+
+
+class AlloWT7UnsupportedError(AlloWT7Error):
+    """The device rejected a command as unknown/unsupported (LAN error -1/-10).
+
+    Seen on protocol-dialect variants (e.g. IDS9478W) whose firmware does not
+    implement the commands this integration was reverse-engineered against.
+    """
 
 
 class AlloWT7RateLimitError(AlloWT7Error):
@@ -307,6 +317,12 @@ class AlloWT7Client:
         err = env.findtext(".//error", "?")
         if err == LAN_ERROR_NO_STORAGE:
             return None, None, None  # device has no SD card / flash — not an error
+        if err in (LAN_ERROR_COMMAND_UNKNOWN, LAN_ERROR_NOT_SUPPORTED):
+            # Permanent: this firmware doesn't implement get.record.session.
+            # Signal the caller to stop polling rather than retry forever.
+            raise AlloWT7UnsupportedError(
+                f"device does not support 'get.record.session' (LAN error {err})"
+            )
         if err != LAN_ERROR_OK:
             return None, None, f"session error={err}"
 
@@ -494,6 +510,11 @@ class AlloWT7Client:
             raise AlloWT7WrongPinError("unlock PIN mismatch")
         if err == LAN_ERROR_AUTH_INVALID:
             raise AlloWT7AuthError("OAC expired/invalid (refresh from cloud)")
+        if err in (LAN_ERROR_COMMAND_UNKNOWN, LAN_ERROR_NOT_SUPPORTED):
+            raise AlloWT7UnsupportedError(
+                f"device does not support 'set.device.opendoor' (LAN error {err}); "
+                "this wT7 model likely speaks a different protocol dialect"
+            )
         raise AlloWT7Error(f"unexpected LAN error code {err!r}")
 
     async def _post_lan(self, monitor_ip: str, body: str, scheme: str) -> str:

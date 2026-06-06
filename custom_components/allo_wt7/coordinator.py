@@ -19,6 +19,7 @@ from typing import Any
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -27,6 +28,7 @@ from .client import (
     AlloWT7AuthError,
     AlloWT7Client,
     AlloWT7Error,
+    AlloWT7UnsupportedError,
     DeviceInfo,
     generate_client_id,
 )
@@ -231,6 +233,14 @@ class AlloWT7Coordinator(DataUpdateCoordinator):
                     lock_number=lock_number,
                 )
                 return
+            except AlloWT7UnsupportedError as err:
+                # Permanent, model-specific: surface a clean error in the UI
+                # instead of an unhandled traceback, and don't retry.
+                raise HomeAssistantError(
+                    "This wT7 model does not support the door-open command used "
+                    "by the integration and may use a different protocol. See the "
+                    "README ('Unsupported models')."
+                ) from err
             except AlloWT7AuthError as err:
                 if attempt == 0:
                     _LOGGER.warning(
@@ -382,6 +392,15 @@ class AlloWT7Coordinator(DataUpdateCoordinator):
 
             except asyncio.CancelledError:
                 _LOGGER.debug("Doorbell poll loop cancelled")
+                break
+            except AlloWT7UnsupportedError as exc:
+                # This firmware doesn't implement the record-session command;
+                # retrying forever only spams the log. Disable polling for the
+                # lifetime of this entry.
+                _LOGGER.warning(
+                    "Doorbell polling disabled — device does not support it (%s)",
+                    exc,
+                )
                 break
             except Exception:  # noqa: BLE001
                 _LOGGER.exception("Unexpected error in doorbell poll loop")
