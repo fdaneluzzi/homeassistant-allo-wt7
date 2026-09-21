@@ -193,6 +193,13 @@ Open an issue on [GitHub](https://github.com/fdaneluzzi/homeassistant-allo-wt7/i
 - A copy of the entry's debug log (Settings → Logs, filter by `custom_components.allo_wt7`)
 - **Never include** your PIN, password, OAC, or full UMID — redact them first.
 
+## Support this project
+
+If this integration saved you time or money, consider supporting its development:
+
+- **GitHub Sponsors:** [github.com/sponsors/fdaneluzzi](https://github.com/sponsors/fdaneluzzi)
+- **PIX (Brasil):** `aae9a1b1-11e2-4282-a16d-7df8f48ae903`
+
 ## License
 
 [MIT](LICENSE).
