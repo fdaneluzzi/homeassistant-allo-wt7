@@ -249,7 +249,9 @@ class AlloWT7Client:
         session: aiohttp.ClientSession,
         monitor_ip: str,
         oac: str,
-    ) -> tuple[str | None, str | None, str | None]:
+        *,
+        session_id: str | None = None,
+    ) -> tuple[str | None, str | None, str | None, str | None]:
         """Return the (filename, starttime) of the most-recent picture stored.
 
         Uses the two-phase protocol: ``get.record.session`` to open a search
@@ -266,30 +268,22 @@ class AlloWT7Client:
         newer* value; never on a mere change of filename, which oscillates as
         reads alternate between truncated and complete.
 
+        Bandwidth: opening a fresh ``get.record.session`` forces the device to
+        redo a full listing of every picture recorded today, which is the
+        dominant cost of polling every few seconds — easily tens of GB/day on
+        LAN traffic. Pass in the ``session_id`` returned by a previous call to
+        reuse the same open search instead of reopening it (skips straight to
+        ``get.record.message``). The caller should persist the returned
+        session_id and pass it back in; pass None to force a fresh session
+        (e.g. a periodic refresh) or when the previous call returned None as
+        its session_id (the device no longer accepts the reused one).
+
         Returns:
-            (filename, starttime, None) — success; both None if no pictures.
-            (None, None, err_str)       — protocol/network error; back off.
+            (filename, starttime, session_id, None) — success (session_id is
+                None if the device has no storage; otherwise pass it back in
+                on the next call to reuse the session).
+            (None, None, None, err_str) — protocol/network error; back off.
         """
-        today_0 = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        tomorrow = today_0 + timedelta(days=1)
-        t0 = today_0.strftime("%Y-%m-%dT%H:%M:%S")
-        t1 = tomorrow.strftime("%Y-%m-%dT%H:%M:%S")
-
-        session_body = _build_lan_envelope(
-            oac,
-            "get.record.session",
-            (
-                "<record>"
-                "<filetype>picture</filetype>"
-                "<occurtype>all</occurtype>"
-                "<channels>1</channels>"
-                f"<starttime>{t0}</starttime>"
-                f"<endtime>{t1}</endtime>"
-                "<stream>all</stream>"
-                "</record>"
-            ),
-        )
-
         url = f"https://{monitor_ip}{LAN_CGI_PATH}"
         ctx = _ssl_no_verify()
         headers = {
@@ -297,42 +291,70 @@ class AlloWT7Client:
             "User-Agent": USER_AGENT,
         }
         timeout = aiohttp.ClientTimeout(total=self._request_timeout_s)
+        total_bytes = 0
 
-        try:
-            async with session.post(
-                url,
-                data=session_body.encode("utf-8"),
-                headers=headers,
-                ssl=ctx,
-                timeout=timeout,
-            ) as resp:
-                raw = await resp.read()
-        except Exception as exc:  # noqa: BLE001
-            return None, None, f"session request failed: {exc}"
+        sess_id = session_id
+        if sess_id is None:
+            today_0 = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            tomorrow = today_0 + timedelta(days=1)
+            t0 = today_0.strftime("%Y-%m-%dT%H:%M:%S")
+            t1 = tomorrow.strftime("%Y-%m-%dT%H:%M:%S")
 
-        env = _parse_envelope(raw)
-        if env is None:
-            return None, None, f"session: no envelope (raw={raw[:80]!r})"
-
-        err = env.findtext(".//error", "?")
-        if err == LAN_ERROR_NO_STORAGE:
-            return None, None, None  # device has no SD card / flash — not an error
-        if err in (LAN_ERROR_COMMAND_UNKNOWN, LAN_ERROR_NOT_SUPPORTED):
-            # Permanent: this firmware doesn't implement get.record.session.
-            # Signal the caller to stop polling rather than retry forever.
-            raise AlloWT7UnsupportedError(
-                f"device does not support 'get.record.session' (LAN error {err})"
+            session_body = _build_lan_envelope(
+                oac,
+                "get.record.session",
+                (
+                    "<record>"
+                    "<filetype>picture</filetype>"
+                    "<occurtype>all</occurtype>"
+                    "<channels>1</channels>"
+                    f"<starttime>{t0}</starttime>"
+                    f"<endtime>{t1}</endtime>"
+                    "<stream>all</stream>"
+                    "</record>"
+                ),
             )
-        if err != LAN_ERROR_OK:
-            return None, None, f"session error={err}"
 
-        sess_id = env.findtext(".//record/id", "")
-        if not sess_id:
-            return None, None, "session returned no id"
+            try:
+                async with session.post(
+                    url,
+                    data=session_body.encode("utf-8"),
+                    headers=headers,
+                    ssl=ctx,
+                    timeout=timeout,
+                ) as resp:
+                    raw = await resp.read()
+            except Exception as exc:  # noqa: BLE001
+                return None, None, None, f"session request failed: {exc}"
+            total_bytes += len(raw)
+
+            env = _parse_envelope(raw)
+            if env is None:
+                return None, None, None, f"session: no envelope (raw={raw[:80]!r})"
+
+            err = env.findtext(".//error", "?")
+            if err == LAN_ERROR_NO_STORAGE:
+                return None, None, None, None  # no SD card / flash — not an error
+            if err in (LAN_ERROR_COMMAND_UNKNOWN, LAN_ERROR_NOT_SUPPORTED):
+                # Permanent: this firmware doesn't implement get.record.session.
+                # Signal the caller to stop polling rather than retry forever.
+                raise AlloWT7UnsupportedError(
+                    f"device does not support 'get.record.session' (LAN error {err})"
+                )
+            if err != LAN_ERROR_OK:
+                return None, None, None, f"session error={err}"
+
+            sess_id = env.findtext(".//record/id", "")
+            if not sess_id:
+                return None, None, None, "session returned no id"
 
         # Read pages until empty datalist
         last_filename: str | None = None
         last_starttime: str = ""
+        # Becomes False if the device rejects the reused session outright —
+        # signals the caller to open a fresh one next time instead of
+        # silently retrying the same (dead) session_id forever.
+        session_still_valid = True
 
         for _ in range(20):  # hard cap — device typically needs ≤3 pages
             msg_body = _build_lan_envelope(
@@ -351,14 +373,20 @@ class AlloWT7Client:
                     raw = await resp.read()
             except Exception:  # noqa: BLE001
                 break  # use whatever we collected so far
+            total_bytes += len(raw)
 
             env = _parse_envelope(raw)
             if env is None:
                 break
 
+            msg_err = env.findtext(".//error")
+            if msg_err is not None and msg_err != LAN_ERROR_OK:
+                session_still_valid = False
+                break
+
             datas = env.findall(".//data")
             if not datas:
-                break  # empty datalist = no more pages
+                break  # empty datalist = no more pages (or nothing new, if reused)
 
             for d in datas:
                 st = (d.findtext("starttime") or "").strip()
@@ -378,7 +406,16 @@ class AlloWT7Client:
                     last_starttime = st
                     last_filename = fn
 
-        return last_filename, (last_starttime or None), None
+        _LOGGER.debug(
+            "Doorbell poll: %d bytes over the wire (session %s, reused=%s, valid=%s)",
+            total_bytes,
+            sess_id,
+            session_id is not None,
+            session_still_valid,
+        )
+
+        returned_session_id = sess_id if session_still_valid else None
+        return last_filename, (last_starttime or None), returned_session_id, None
 
     # --- Internals ------------------------------------------------------------
 

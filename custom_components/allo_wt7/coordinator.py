@@ -90,6 +90,17 @@ STORE_VERSION = 1
 DOORBELL_WARMUP_STABLE_READS = 3  # consecutive non-increasing reads -> lock baseline
 DOORBELL_WARMUP_MAX_POLLS = 15    # hard cap on warmup reads (flaky-device backstop)
 
+# --- Doorbell bandwidth: session reuse -------------------------------------
+# Opening a fresh get.record.session forces the device to redo a full listing
+# of every picture recorded today; at a 2s poll interval this is the
+# dominant cost of doorbell polling (tens of GB/day of LAN traffic). We
+# reuse the same session_id across polls (client.poll_last_picture) and only
+# force a fresh one periodically, bounding the worst case where a reused
+# session silently stops seeing new pictures (no protocol error, just no
+# new data) to this many seconds of extra ring-detection latency — same
+# order of magnitude as the post-ring throttle window below.
+DOORBELL_SESSION_REFRESH_S = 30.0
+
 
 class AlloWT7Coordinator(DataUpdateCoordinator):
     """Owns the OAC cache, exposes open_door() and doorbell ring detection."""
@@ -120,6 +131,10 @@ class AlloWT7Coordinator(DataUpdateCoordinator):
         self._doorbell_baseline_locked: bool = False
         self._warmup_stable_reads: int = 0
         self._warmup_polls: int = 0
+        # Reused get.record.session id (bandwidth optimization) + when it was
+        # (re)opened, so we know when to force a periodic refresh.
+        self._doorbell_session_id: str | None = None
+        self._doorbell_session_opened_at: float = 0.0
 
         session = async_get_clientsession(hass)
         self._client = AlloWT7Client(
@@ -304,10 +319,21 @@ class AlloWT7Coordinator(DataUpdateCoordinator):
                     consecutive_errors += 1
                     continue
 
-                filename, starttime, err = await self._client.poll_last_picture(
-                    session,
-                    self._data[CONF_MONITOR_IP],
-                    oac,
+                now_mono = time.monotonic()
+                if self._doorbell_session_id is not None and (
+                    now_mono - self._doorbell_session_opened_at
+                    > DOORBELL_SESSION_REFRESH_S
+                ):
+                    self._doorbell_session_id = None  # periodic forced refresh
+
+                reused_session_id = self._doorbell_session_id
+                filename, starttime, new_session_id, err = (
+                    await self._client.poll_last_picture(
+                        session,
+                        self._data[CONF_MONITOR_IP],
+                        oac,
+                        session_id=reused_session_id,
+                    )
                 )
 
                 if err is not None:
@@ -318,6 +344,7 @@ class AlloWT7Coordinator(DataUpdateCoordinator):
                         max_consecutive_errors,
                         err,
                     )
+                    self._doorbell_session_id = None  # don't retry a bad session
                     if consecutive_errors >= max_consecutive_errors:
                         _LOGGER.info(
                             "Too many consecutive doorbell errors — forcing OAC refresh"
@@ -331,20 +358,30 @@ class AlloWT7Coordinator(DataUpdateCoordinator):
                     continue
 
                 consecutive_errors = 0
+                if new_session_id != reused_session_id:
+                    # A fresh session was (re)opened this round — either we
+                    # asked for one, or the device rejected the reused one.
+                    self._doorbell_session_opened_at = now_mono
+                self._doorbell_session_id = new_session_id
 
-                # No usable picture this poll (empty/heavily-truncated read, or a
-                # device with no storage) -> nothing to do; never lower the mark.
-                if not filename or not starttime:
-                    continue
+                # A reused session legitimately returns "no data" when nothing
+                # new has appeared since the last poll — that is a normal,
+                # frequent outcome now (not just "empty/truncated read" as it
+                # was when every poll relisted the whole day), so it must
+                # still count as a (non-climbing) read for warmup purposes;
+                # only the ring-fire check below is skipped when there's
+                # nothing to compare.
+                has_picture = bool(filename and starttime)
 
                 if not self._doorbell_baseline_locked:
                     # Stability warmup: climb the running max to the true newest
                     # picture, then lock once it stops climbing for STABLE_READS
-                    # consecutive reads.  A truncated read can only fail to climb
-                    # (it never exceeds the true max), so it just counts toward
-                    # stability rather than corrupting the baseline.  Never fires.
+                    # consecutive reads.  A truncated read (or a reused session
+                    # reporting nothing new) can only fail to climb (it never
+                    # exceeds the true max), so it just counts toward stability
+                    # rather than corrupting the baseline.  Never fires.
                     self._warmup_polls += 1
-                    if starttime > self._high_water_starttime:
+                    if has_picture and starttime > self._high_water_starttime:
                         self._high_water_starttime = starttime
                         self._last_picture_filename = filename
                         self._warmup_stable_reads = 0
@@ -368,6 +405,12 @@ class AlloWT7Coordinator(DataUpdateCoordinator):
                             DOORBELL_WARMUP_STABLE_READS,
                             self._warmup_polls,
                         )
+                    continue
+
+                # Nothing to compare against the baseline this poll (reused
+                # session reported no new records, or a truncated/empty read)
+                # -> never lower the mark, just wait for the next poll.
+                if not has_picture:
                     continue
 
                 if starttime > self._high_water_starttime:
