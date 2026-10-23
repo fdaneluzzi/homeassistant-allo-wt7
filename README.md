@@ -6,7 +6,7 @@
 
 Open the doors of your **Intelbras Allo wT7** video intercom from Home Assistant — over the local network, without keeping the official Allo Plus app running.
 
-> **Status: 0.3.0.** Door opening and doorbell ring detection are working and validated against a real device (model `IDS9478AW`).  Two-way audio and camera stream are out of scope for now.
+> **Status: 0.4.0.** Door opening and doorbell ring detection are working and validated against a real device (model `IDS9478AW`).  Two-way audio and camera stream are out of scope for now.
 
 ## Features
 
