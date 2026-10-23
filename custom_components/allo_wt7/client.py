@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import re
 import ssl
 import time
 import uuid
@@ -151,6 +152,16 @@ def _build_lan_envelope(oac: str, command: str, content_inner: str = "") -> str:
         "</body>"
         "</envelope>"
     )
+
+
+_COMMAND_RE = re.compile(r"<command>([^<]*)</command>")
+_SECRET_RE = re.compile(r"<(password|out-auth-code|auth-code)>[^<]*</\1>")
+
+
+def _redact_for_log(raw: bytes, limit: int = 300) -> str:
+    """Decode a LAN response for DEBUG logs, masking credential elements."""
+    text = raw[:limit * 2].decode("utf-8", errors="replace")
+    return _SECRET_RE.sub(r"<\1>***</\1>", text)[:limit]
 
 
 def _parse_envelope(buf: bytes) -> ET.Element | None:
@@ -565,6 +576,8 @@ class AlloWT7Client:
         # port 80 (SYN dropped -> full-timeout hang) rather than refusing it, which
         # tar-pits an http-first probe for request_timeout_s on every LAN call.
         schemes = ["https"] if scheme == "https" else ["https", scheme]
+        cmd_match = _COMMAND_RE.search(body)
+        command = cmd_match.group(1) if cmd_match else "?"
         last_exc: Exception | None = None
 
         for attempt in range(2):
@@ -585,6 +598,13 @@ class AlloWT7Client:
                             timeout=t,
                         ) as resp:
                             raw = await resp.read()
+                            _LOGGER.debug(
+                                "LAN %s -> HTTP %s, command=%s, body=%s",
+                                url,
+                                resp.status,
+                                command,
+                                _redact_for_log(raw),
+                            )
                             if resp.status != 200:
                                 _LOGGER.warning(
                                     "LAN %s HTTP %s", url, resp.status
