@@ -2,6 +2,7 @@
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-fdaneluzzi-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/fdaneluzzi)
 
 Open the doors of your **Intelbras Allo wT7** video intercom from Home Assistant — over the local network, without keeping the official Allo Plus app running.
 
@@ -197,8 +198,15 @@ Open an issue on [GitHub](https://github.com/fdaneluzzi/homeassistant-allo-wt7/i
 
 If this integration saved you time or money, consider supporting its development:
 
-- **GitHub Sponsors:** [github.com/sponsors/fdaneluzzi](https://github.com/sponsors/fdaneluzzi)
-- **PIX (Brasil):** `aae9a1b1-11e2-4282-a16d-7df8f48ae903`
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-fdaneluzzi-FFDD00?style=for-the-badge&logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/fdaneluzzi)
+[![GitHub Sponsors](https://img.shields.io/badge/GitHub%20Sponsors-fdaneluzzi-EA4AAA?style=for-the-badge&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/fdaneluzzi)
+
+<details>
+<summary>PIX (Brasil)</summary>
+
+Chave aleatória: `aae9a1b1-11e2-4282-a16d-7df8f48ae903`
+
+</details>
 
 ## License
 
