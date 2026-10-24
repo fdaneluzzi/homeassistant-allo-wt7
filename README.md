@@ -26,7 +26,7 @@ Open the doors of your **Intelbras Allo wT7** video intercom from Home Assistant
 
 ## Unsupported models
 
-The integration was reverse-engineered against the **`IDS9478AW`**. Some wT7
+The integration was tested against the **`IDS9478AW`**. Some wT7
 variants ship firmware that speaks a **different LAN protocol dialect** and are
 **not currently supported**:
 

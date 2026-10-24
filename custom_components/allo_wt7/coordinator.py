@@ -30,6 +30,7 @@ from .client import (
     AlloWT7Error,
     AlloWT7UnsupportedError,
     DeviceInfo,
+    StreamCredentials,
     generate_client_id,
 )
 from .const import (
@@ -59,6 +60,10 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 STORE_VERSION = 1
+
+# The device-issued video stream key (data-encode-key) expires in ~1 day.
+# Refresh it well before that so a live view / snapshot never races the expiry.
+STREAM_CREDS_TTL = 12 * 3600  # 12h
 
 # --- Doorbell false-ring hardening -------------------------------------------
 # The wT7 intermittently returns a TRUNCATED record list (a prefix of the full
@@ -119,6 +124,13 @@ class AlloWT7Coordinator(DataUpdateCoordinator):
         self._oac: str | None = None
         self._oac_expires_at: float = 0.0
         self.device_info: DeviceInfo | None = None
+
+        # LAN video stream credentials (data-encode-key + auth code) from the
+        # cloud get-device-token call. Kept in memory only (never persisted) —
+        # they are a secret, cheap to re-fetch, and expire in ~1 day on the
+        # device, so we refresh them well before that (STREAM_CREDS_TTL).
+        self._stream_creds: StreamCredentials | None = None
+        self._stream_creds_expires_at: float = 0.0
 
         # Doorbell polling state
         self._doorbell_task: asyncio.Task | None = None
@@ -218,6 +230,41 @@ class AlloWT7Coordinator(DataUpdateCoordinator):
         self._oac_expires_at = time.time() + ttl
         await self._save()
         return oac
+
+    @property
+    def monitor_ip(self) -> str:
+        """LAN IP of the wT7 monitor (used by the camera/image platforms)."""
+        return self._data[CONF_MONITOR_IP]
+
+    async def async_get_stream_credentials(
+        self, *, force_refresh: bool = False
+    ) -> StreamCredentials:
+        """Return cached LAN video credentials, refreshing from cloud as needed.
+
+        Ensures the OAC/device info first (to know the device umid), then calls
+        ``get-device-token`` to obtain the 32-byte stream key + auth code.
+        """
+        if (
+            not force_refresh
+            and self._stream_creds
+            and time.time() < self._stream_creds_expires_at
+        ):
+            return self._stream_creds
+        await self._ensure_oac()
+        umid = self.device_info.umid if self.device_info else ""
+        if not umid:
+            raise UpdateFailed("stream credentials: device umid unknown")
+        try:
+            creds = await self._client.fetch_stream_credentials(
+                self._data[CONF_EMAIL], self._data[CONF_PASSWORD], umid
+            )
+        except AlloWT7AuthError as err:
+            raise UpdateFailed(f"cloud auth failed: {err}") from err
+        except AlloWT7Error as err:
+            raise UpdateFailed(f"cloud error: {err}") from err
+        self._stream_creds = creds
+        self._stream_creds_expires_at = time.time() + STREAM_CREDS_TTL
+        return creds
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Called by DataUpdateCoordinator. We do nothing periodic — only
