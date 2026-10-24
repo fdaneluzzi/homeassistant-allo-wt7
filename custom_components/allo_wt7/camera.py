@@ -1,13 +1,13 @@
 """Live camera entity for the Intelbras Allo wT7 video doorbell.
 
 Exposes the doorbell's live view as an HA ``Camera``:
-  - still images via :meth:`async_camera_image` (used by the camera card,
-    snapshots, and automations), and
-  - a live H.264 stream via a local RTSP server (:mod:`.video`) handed to HA's
-    ``stream`` component.
+  - still images via :meth:`async_camera_image`, and
+  - a live H.264 stream via a local RTSP server handed to HA's ``stream``
+    component.
 
-Both go over the direct LAN TCP channel using credentials fetched from the
-cloud by the coordinator; nothing here touches the cloud directly.
+All device access goes through the coordinator's single :class:`WT7Video`
+manager, which serializes the device's one video session and releases it when
+idle so the official Allo Plus app stays usable.
 """
 
 from __future__ import annotations
@@ -21,21 +21,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import (
-    DOMAIN,
-    MANUFACTURER,
-    MODEL,
-    RTSP_BASE_PORT,
-    VIDEO_CHANNEL,
-    VIDEO_STREAM,
-)
+from .const import DOMAIN, MANUFACTURER, MODEL
 from .coordinator import AlloWT7Coordinator
-from .video import WT7VideoBridge, grab_snapshot_bytes
 
 _LOGGER = logging.getLogger(__name__)
 
-# Don't re-open a full LAN session for every still request; reuse a recent
-# snapshot for this long (the live stream is the path for smooth video).
+# Reuse a recent still for this long so the camera card doesn't re-open a
+# device session (or re-probe the stream) on every thumbnail refresh.
 SNAPSHOT_CACHE_TTL = 5.0
 
 
@@ -66,11 +58,6 @@ class AlloWT7Camera(Camera):
         self._coordinator = coordinator
         self._entry = entry
         self._attr_unique_id = f"{entry.unique_id or entry.entry_id}_camera"
-        # Deterministic per-entry RTSP port so multiple wT7 don't collide.
-        self._rtsp_port = RTSP_BASE_PORT + (
-            abs(hash(entry.entry_id)) % 100
-        )
-        self._bridge: WT7VideoBridge | None = None
         self._snapshot: bytes | None = None
         self._snapshot_at: float = 0.0
 
@@ -92,31 +79,21 @@ class AlloWT7Camera(Camera):
         now = time.monotonic()
         if self._snapshot and (now - self._snapshot_at) < SNAPSHOT_CACHE_TTL:
             return self._snapshot
+        if self._coordinator.video is None:
+            return None
         creds = await self._coordinator.async_get_stream_credentials()
         data = await self.hass.async_add_executor_job(
-            grab_snapshot_bytes,
-            self._coordinator.monitor_ip,
-            creds,
+            self._coordinator.video.snapshot_bytes, creds
         )
         self._snapshot = data
         self._snapshot_at = now
         return data
 
-    async def async_stream_source(self) -> str | None:
+    async def stream_source(self) -> str | None:
         """Return the local RTSP URL, starting the LAN->RTSP bridge if needed."""
+        if self._coordinator.video is None:
+            return None
         creds = await self._coordinator.async_get_stream_credentials()
-        if self._bridge is None:
-            self._bridge = WT7VideoBridge(
-                self._coordinator.monitor_ip,
-                self._rtsp_port,
-                channel=VIDEO_CHANNEL,
-                stream=VIDEO_STREAM,
-            )
-        bridge = self._bridge
-        return await self.hass.async_add_executor_job(bridge.start, creds)
-
-    async def async_will_remove_from_hass(self) -> None:
-        """Tear down the RTSP bridge thread on unload."""
-        if self._bridge is not None:
-            await self.hass.async_add_executor_job(self._bridge.stop)
-            self._bridge = None
+        return await self.hass.async_add_executor_job(
+            self._coordinator.video.stream_url, creds
+        )

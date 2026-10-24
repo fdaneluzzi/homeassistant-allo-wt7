@@ -18,7 +18,6 @@ from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, EVENT_DOORBELL_RING, MANUFACTURER, MODEL
 from .coordinator import AlloWT7Coordinator
-from .video import grab_snapshot_bytes
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -78,11 +77,12 @@ class AlloWT7LastRingImage(ImageEntity):
         self.hass.async_create_task(self._capture())
 
     async def _capture(self) -> None:
+        if self._coordinator.video is None:
+            return
         try:
             creds = await self._coordinator.async_get_stream_credentials()
             data = await self.hass.async_add_executor_job(
-                grab_snapshot_bytes,
-                self._coordinator.monitor_ip,
+                self._coordinator.video.snapshot_bytes,
                 creds,
             )
         except Exception as exc:  # noqa: BLE001
