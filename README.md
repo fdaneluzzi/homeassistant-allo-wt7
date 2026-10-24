@@ -4,13 +4,15 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-fdaneluzzi-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/fdaneluzzi)
 
-Open the doors of your **Intelbras Allo wT7** video intercom from Home Assistant — over the local network, without keeping the official Allo Plus app running.
+Open the doors of your **Intelbras Allo wT7** video intercom from Home Assistant — and see who's at the door — over the local network, without keeping the official Allo Plus app running.
 
-> **Status: 0.4.0.** Door opening and doorbell ring detection are working and validated against a real device (model `IDS9478AW`).  Two-way audio and camera stream are out of scope for now.
+> **Status: 0.5.0.** Door opening, doorbell ring detection, **live camera** and **ring snapshots** are working and validated against a real device (model `IDS9478AW`).  Two-way audio is out of scope for now.
 
 ## Features
 
 - 🔔 **Doorbell ring detection** as a Home Assistant `event` entity — trigger any automation the moment someone rings the bell (typ. 2–3 s latency, pure LAN polling)
+- 📹 **Live camera** as a Home Assistant `camera` entity — still image and live H.264 stream, served over the direct LAN video channel
+- 🖼️ **Last-ring snapshot** as an `image` entity — automatically captured when the doorbell is pressed, so a notification can show who rang
 - 🔘 **Open door(s)** as Home Assistant `button` entities (one press → one open pulse)
 - 🚪 **Dual-door support**: a wT7 typically controls a social door + a garage gate
 - 🛠️ **Service action** `allo_wt7.open_door` for automations that need to pass `lock_number` dynamically
@@ -23,6 +25,8 @@ Open the doors of your **Intelbras Allo wT7** video intercom from Home Assistant
 - Intelbras Allo wT7 (or wT7 Lite) on your LAN, paired and working with the Allo Plus app
 - Your Allo Plus account email and password
 - The numeric unlock PIN that you set in the app the first time you opened a door
+- **FFmpeg on the host** for camera/snapshot JPEG rendering — bundled with Home Assistant OS and the official container, so no extra step on a standard install
+- The camera/image entities pull in the [`quii-helper`](https://pypi.org/project/quii-helper/) library automatically (declared in the manifest); no manual install needed
 
 ## Unsupported models
 
@@ -75,6 +79,8 @@ The integration is fully configured through the UI:
 
 After save, you get:
 - `event.campainha` — fires `ring` every time someone presses the doorbell
+- `camera.camera` — live view of the doorbell (still image + stream)
+- `image.ultimo_toque` — snapshot of the most recent ring
 - `button.<door1_name>`
 - `button.<door2_name>` (if enabled)
 
@@ -131,6 +137,47 @@ In Settings → Devices & Services → Allo wT7 → **Configure**, you can:
 
 Changes take effect after HA reloads the entry (done automatically when you save).
 
+## Camera & snapshots
+
+The wT7's live video travels over a direct **LAN TCP channel** (port `34567`,
+AES-256) using the device's proprietary Quvii protocol. This integration uses
+the MIT-licensed [`quii-helper`](https://github.com/xaer981/quii-helper) library
+(tested against this device family) to decode it, and fetches the short-lived
+video **stream key** from the same Intelbras cloud the integration already uses
+for login.
+
+- `camera.camera` — a `camera` entity with a still image and a live H.264
+  stream. The stream is served to Home Assistant through a local RTSP endpoint
+  and played by HA's built-in `stream` component.
+- `image.ultimo_toque` — an `image` entity that captures a fresh JPEG the moment
+  a ring is detected. Point a mobile notification at it to see who rang.
+
+**All video is LAN.** The cloud is contacted only to refresh the stream key
+(about every 12 h, a small HTTPS call — no video ever goes through the cloud).
+Video is on demand: the doorbell only encodes and sends frames while the camera
+or stream is actually open, so there's no continuous traffic.
+
+Snapshot example in an automation:
+
+```yaml
+automation:
+  - alias: "Ring snapshot to phone"
+    trigger:
+      - platform: event
+        event_type: allo_wt7_doorbell_ring
+    action:
+      - delay: "00:00:02"   # let the image entity capture the frame
+      - service: notify.mobile_app_my_phone
+        data:
+          message: "Alguém tocou a campainha."
+          data:
+            image: /api/image_proxy/image.ultimo_toque
+```
+
+> **Two-way audio** (intercom) is not implemented. The current stream is
+> video-only; adding audio — especially the talk-back path — is tracked on the
+> roadmap.
+
 ## Why `button` and not `lock`?
 
 The wT7 has no state sensor — it cannot tell HA whether a door is currently open or closed. Earlier versions exposed each door as a `lock` entity with fake "unlocked → re-locked after 5s" state, which was misleading (especially for the garage gate). A `button` is honest with the hardware: one press = one pulse. If you need state, build a template `binary_sensor` on top of an external sensor you trust.
@@ -148,21 +195,22 @@ After updating to 0.2.0 in HACS, **remove and re-add the integration** in Settin
 ## How it works
 
 ```
-┌────────────────────┐  1× every 12h  ┌─────────────────────────────┐
-│ Home Assistant     │ ── HTTPS:443 ─▶│ intelbras-4.qvcloud.net     │
-│ allo_wt7 component │                │ /auth/user;jus_duplex=up|dn │
-└──────────┬─────────┘  (login → OAC) └─────────────────────────────┘
+┌────────────────────┐  1× every 12h   ┌─────────────────────────────┐
+│ Home Assistant     │ ── HTTPS:443 ──▶│ intelbras-4.qvcloud.net     │
+│ allo_wt7 component │  login → OAC +  │ /auth/user;jus_duplex=up|dn │
+└──────────┬─────────┘  stream key     └─────────────────────────────┘
            │
-           │  every 2 s: get.record.session + get.record.message (HTTPS)
-           │  every door-open: set.device.opendoor (HTTPS)
+           │  every 2 s: get.record.session + get.record.message (HTTPS, LAN)
+           │  every door-open: set.device.opendoor (HTTPS, LAN)
+           │  live view / snapshot: direct TCP :34567 (AES-256 video, LAN)
            ▼
    ┌──────────────┐
    │ wT7 monitor  │ ─── saves JPEG snapshot on each ring ───▶ internal flash
-   │ (your LAN)   │
+   │ (your LAN)   │ ─── H.264 live video on demand ─────────▶ TCP :34567
    └──────────────┘
 ```
 
-The cloud is contacted only to fetch the `out-auth-code` (OAC) — a per-device session credential that lasts ~12 h.  Once cached on disk, all doorbell polls and door-opens are pure LAN.
+The cloud is contacted only to fetch two short-lived per-device credentials — the `out-auth-code` (OAC) for door/doorbell and the video stream key — each lasting ~12 h.  Once cached, all doorbell polls, door-opens and video are pure LAN.
 
 **Doorbell detection mechanism:** the wT7 records one JPEG snapshot per ring.  HA polls the picture list every 2 s; when a new filename appears, it fires the `allo_wt7_doorbell_ring` bus event.  No cloud, no push notifications, no network sniffer required.
 
@@ -181,9 +229,9 @@ The cloud is contacted only to fetch the `out-auth-code` (OAC) — a per-device 
 
 - [x] 0.1.0 — Open doors (as `lock` entities — deprecated)
 - [x] 0.2.0 — Switch to `button` entities + service action
-- [x] 0.3.0 — Doorbell ring detection via `event` entity (current)
-- [ ] Camera snapshot
-- [ ] Two-way audio
+- [x] 0.3.0 — Doorbell ring detection via `event` entity
+- [x] 0.5.0 — Live `camera` entity + last-ring `image` snapshot (current)
+- [ ] Two-way audio (intercom)
 - [ ] Push to HACS default repositories
 
 ## Reporting issues
