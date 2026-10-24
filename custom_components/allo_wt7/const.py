@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 DOMAIN = "allo_wt7"
-PLATFORMS = ["button", "event"]
+PLATFORMS = ["button", "event", "camera", "image"]
 
 MANUFACTURER = "Intelbras"
 MODEL = "Allo wT7"
@@ -18,6 +18,12 @@ OEM_ID = "A0077,G0077"
 APP_ID = "4077"
 CLIENT_TYPE = 3
 USER_AGENT = "okhttp/3.12.13"
+
+# LAN video (direct TCP, Quvii tdkcloud / AES-256)
+STREAM_PORT = 34567
+VIDEO_CHANNEL = 1      # doorbell camera channel
+VIDEO_STREAM = 2       # 2 = lower-bandwidth substream; 1 = main/high-res
+RTSP_BASE_PORT = 8554  # local RTSP server the camera entity exposes to HA
 
 # LAN
 LAN_USERNAME = "adminapp2"

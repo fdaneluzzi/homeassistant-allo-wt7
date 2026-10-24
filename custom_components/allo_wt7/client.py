@@ -77,7 +77,7 @@ class AlloWT7UnsupportedError(AlloWT7Error):
     """The device rejected a command as unknown/unsupported (LAN error -1/-10).
 
     Seen on protocol-dialect variants (e.g. IDS9478W) whose firmware does not
-    implement the commands this integration was reverse-engineered against.
+    implement the commands this integration was tested against.
     """
 
 
@@ -90,6 +90,22 @@ class DeviceInfo:
     umid: str
     model: str
     name: str
+
+
+@dataclass
+class StreamCredentials:
+    """LAN video credentials from the cloud ``get-device-token`` call.
+
+    ``stream_key`` is the 32-byte ``data-encode-key`` used as the AES key for
+    the direct LAN TCP video channel (port 34567); ``auth_code`` is its paired
+    device auth code.  ``pwd_expired`` is the device's own expiry string
+    (timezone unverified — kept only for diagnostics, never for cache logic).
+    """
+
+    stream_key: str
+    auth_code: str
+    umid: str
+    pwd_expired: str = ""
 
 
 def _ssl_no_verify() -> ssl.SSLContext:
@@ -208,6 +224,12 @@ class AlloWT7Client:
     ) -> tuple[str, DeviceInfo]:
         """Log in to the cloud and retrieve the OAC + device info."""
         return await self._cloud_login_and_get_oac(email, password)
+
+    async def fetch_stream_credentials(
+        self, email: str, password: str, umid: str
+    ) -> StreamCredentials:
+        """Log in and fetch the LAN video stream key/auth via get-device-token."""
+        return await self._cloud_login_and_get_stream_creds(email, password, umid)
 
     async def open_door(
         self,
@@ -445,29 +467,65 @@ class AlloWT7Client:
                 f"{recent} unlocks in last hour (limit {self._max_unlocks_per_hour})"
             )
 
-    async def _cloud_login_and_get_oac(
-        self, email: str, password: str
-    ) -> tuple[str, DeviceInfo]:
+    async def _login(
+        self,
+        session: aiohttp.ClientSession,
+        base: str,
+        ctx: ssl.SSLContext,
+        email: str,
+        password: str,
+    ) -> str:
+        """Perform the 3-step cloud login and return the session id."""
+        p_sha = hashlib.sha256(password.encode("utf-8")).hexdigest()
+        await self._post(session, f"{base}/auth/user;jus_duplex=down", b"", ctx)
+
+        login_content = (
+            f"<content><account>{email}</account>"
+            f"<password>{p_sha}</password>"
+            "<auth-type>0</auth-type><auth-code></auth-code>"
+            "<ip-region-id>0</ip-region-id></content>"
+        )
+        login_body = _build_cloud_envelope("login", 1, login_content, self._client_id)
+        await self._post(
+            session, f"{base}/auth/user;jus_duplex=up", login_body, ctx
+        )
+        _, raw = await self._post(
+            session, f"{base}/auth/user;jus_duplex=down", b"", ctx, timeout=15
+        )
+        env = _parse_envelope(raw)
+        if env is None:
+            raise AlloWT7AuthError("login: no envelope in response")
+        result = env.findtext(".//result", "")
+        session_id = env.findtext(".//session/id") or ""
+        if result not in CLOUD_RESULT_OK:
+            msg = {
+                CLOUD_RESULT_BAD_CREDENTIALS: "invalid credentials",
+                CLOUD_RESULT_ACCOUNT_LOCKED: "account locked",
+                CLOUD_RESULT_ACCOUNT_NOT_FOUND: "account does not exist",
+            }.get(result, f"unknown error (result={result})")
+            raise AlloWT7AuthError(f"login failed: {msg}")
+        return session_id
+
+    async def _cloud_login_and_get_stream_creds(
+        self, email: str, password: str, umid: str
+    ) -> StreamCredentials:
         ctx = _ssl_no_verify()
         base = f"https://{CLOUD_HOST}:{CLOUD_PORT}"
-        p_sha = hashlib.sha256(password.encode("utf-8")).hexdigest()
         jar = aiohttp.CookieJar(unsafe=True)
 
         async with aiohttp.ClientSession(cookie_jar=jar) as session:
             try:
-                await self._post(session, f"{base}/auth/user;jus_duplex=down", b"", ctx)
+                session_id = await self._login(session, base, ctx, email, password)
 
-                login_content = (
-                    f"<content><account>{email}</account>"
-                    f"<password>{p_sha}</password>"
-                    "<auth-type>0</auth-type><auth-code></auth-code>"
-                    "<ip-region-id>0</ip-region-id></content>"
-                )
-                login_body = _build_cloud_envelope(
-                    "login", 1, login_content, self._client_id
+                token_body = _build_cloud_envelope(
+                    "get-device-token",
+                    3,
+                    f"<content><device-id>{umid}</device-id></content>",
+                    self._client_id,
+                    session_id,
                 )
                 await self._post(
-                    session, f"{base}/auth/user;jus_duplex=up", login_body, ctx
+                    session, f"{base}/auth/user;jus_duplex=up", token_body, ctx
                 )
                 _, raw = await self._post(
                     session,
@@ -478,16 +536,57 @@ class AlloWT7Client:
                 )
                 env = _parse_envelope(raw)
                 if env is None:
-                    raise AlloWT7AuthError("login: no envelope in response")
+                    raise AlloWT7Error("device-token: no envelope")
                 result = env.findtext(".//result", "")
-                session_id = env.findtext(".//session/id") or ""
                 if result not in CLOUD_RESULT_OK:
-                    msg = {
-                        CLOUD_RESULT_BAD_CREDENTIALS: "invalid credentials",
-                        CLOUD_RESULT_ACCOUNT_LOCKED: "account locked",
-                        CLOUD_RESULT_ACCOUNT_NOT_FOUND: "account does not exist",
-                    }.get(result, f"unknown error (result={result})")
-                    raise AlloWT7AuthError(f"login failed: {msg}")
+                    raise AlloWT7Error(f"device-token failed (result={result})")
+                stream_key = (
+                    env.findtext(".//data-encode-key")
+                    or env.findtext(".//dataEncodeKey")
+                    or ""
+                )
+                auth_code = (
+                    env.findtext(".//auth-code")
+                    or env.findtext(".//out-auth-code")
+                    or env.findtext(".//authCode")
+                    or ""
+                )
+                pwd_expired = (
+                    env.findtext(".//pwd-expired")
+                    or env.findtext(".//pwdExpired")
+                    or env.findtext(".//password-expired")
+                    or ""
+                )
+                if not stream_key or not auth_code:
+                    raise AlloWT7Error(
+                        "device-token returned without stream key / auth code"
+                    )
+                _LOGGER.info(
+                    "cloud stream credentials obtained (key %d bytes) for %s",
+                    len(stream_key.encode("utf-8")),
+                    umid,
+                )
+                return StreamCredentials(
+                    stream_key=stream_key,
+                    auth_code=auth_code,
+                    umid=umid,
+                    pwd_expired=pwd_expired,
+                )
+            except aiohttp.ClientConnectorError as e:
+                raise AlloWT7ConnectionError(f"cloud unreachable: {e}") from e
+            except asyncio.TimeoutError as e:
+                raise AlloWT7ConnectionError("cloud timeout") from e
+
+    async def _cloud_login_and_get_oac(
+        self, email: str, password: str
+    ) -> tuple[str, DeviceInfo]:
+        ctx = _ssl_no_verify()
+        base = f"https://{CLOUD_HOST}:{CLOUD_PORT}"
+        jar = aiohttp.CookieJar(unsafe=True)
+
+        async with aiohttp.ClientSession(cookie_jar=jar) as session:
+            try:
+                session_id = await self._login(session, base, ctx, email, password)
 
                 dl_body = _build_cloud_envelope(
                     "get-device-list",
