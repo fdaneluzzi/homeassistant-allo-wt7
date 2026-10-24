@@ -33,6 +33,7 @@ from .client import (
     StreamCredentials,
     generate_client_id,
 )
+from .video import WT7Video
 from .const import (
     CONF_DOORBELL_ENABLED,
     CONF_DOORBELL_POLL_INTERVAL,
@@ -55,6 +56,9 @@ from .const import (
     DEFAULT_REQUEST_TIMEOUT,
     DOMAIN,
     EVENT_DOORBELL_RING,
+    RTSP_BASE_PORT,
+    VIDEO_CHANNEL,
+    VIDEO_STREAM,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -132,6 +136,10 @@ class AlloWT7Coordinator(DataUpdateCoordinator):
         self._stream_creds: StreamCredentials | None = None
         self._stream_creds_expires_at: float = 0.0
 
+        # Single shared video session manager (created in async_setup once the
+        # monitor IP is known). Owns the LAN->RTSP bridge + serialization.
+        self.video: WT7Video | None = None
+
         # Doorbell polling state
         self._doorbell_task: asyncio.Task | None = None
         self._last_picture_filename: str | None = None
@@ -183,6 +191,15 @@ class AlloWT7Coordinator(DataUpdateCoordinator):
             )
         self._client._client_id = self._client_id  # patch in client_id
         await self._save()
+
+        # Deterministic per-entry RTSP port so multiple wT7 don't collide.
+        rtsp_port = RTSP_BASE_PORT + (abs(hash(self._entry.entry_id)) % 100)
+        self.video = WT7Video(
+            self._data[CONF_MONITOR_IP],
+            rtsp_port,
+            channel=VIDEO_CHANNEL,
+            stream=VIDEO_STREAM,
+        )
 
         if self._opt(CONF_DOORBELL_ENABLED, DEFAULT_DOORBELL_ENABLED):
             # background task (NOT awaited during bootstrap; auto-cancelled on
@@ -312,6 +329,11 @@ class AlloWT7Coordinator(DataUpdateCoordinator):
                 raise
         # unreachable, but keep type-checkers happy
         raise RuntimeError("open_door retry loop fell through")
+
+    async def async_stop_video(self) -> None:
+        """Release any open video session (called on entry unload)."""
+        if self.video is not None:
+            await self._hass.async_add_executor_job(self.video.stop)
 
     async def async_stop_doorbell_polling(self) -> None:
         """Cancel the background doorbell polling task (called on entry unload)."""
