@@ -44,6 +44,27 @@ _IDLE_GRACE_S = 12.0      # stop this long after the last viewer disconnects
 _MAX_SESSION_S = 600.0    # absolute cap so HA can never hog the camera forever
 _FFMPEG_STILL_TIMEOUT = 20
 
+# The wT7 encodes anamorphic video: coded 960x1080 with a 2:1 pixel aspect
+# ratio (SAR), i.e. a 16:9 (1920x1080) display picture.  HA sizes the camera
+# by the still image and does not apply the SAR, so a raw 960x1080 still makes
+# the whole camera render tall/squished.  We normalize to square pixels at the
+# real display resolution so stills (and the aspect HA assumes) are correct.
+_DISPLAY_SCALE = "scale=1920:1080,setsar=1"
+
+
+def _sar_correct(jpeg: bytes) -> bytes:
+    """Rescale a raw 960x1080 JPEG to its true 16:9 display geometry."""
+    proc = subprocess.run(
+        ["ffmpeg", "-nostdin", "-i", "pipe:0", "-vf", _DISPLAY_SCALE,
+         "-f", "mjpeg", "pipe:1"],
+        input=jpeg,
+        capture_output=True,
+        timeout=_FFMPEG_STILL_TIMEOUT,
+    )
+    if proc.returncode != 0 or not proc.stdout:
+        return jpeg  # fall back to the uncorrected still rather than failing
+    return proc.stdout
+
 
 def _build_lan_camera(
     host: str,
@@ -81,7 +102,7 @@ def _direct_snapshot(
     with tempfile.TemporaryDirectory(prefix="wt7_snap_") as tmp:
         cam = _build_lan_camera(host, creds, channel, stream, data_dir=tmp)
         path = cam.snapshot(timeout_seconds=_FFMPEG_STILL_TIMEOUT)
-        return Path(path).read_bytes()
+        return _sar_correct(Path(path).read_bytes())
 
 
 def _grab_from_rtsp(url: str) -> bytes:
@@ -92,7 +113,8 @@ def _grab_from_rtsp(url: str) -> bytes:
     proc = subprocess.run(
         [
             "ffmpeg", "-nostdin", "-rtsp_transport", "tcp", "-i", url,
-            "-frames:v", "1", "-q:v", "2", "-f", "mjpeg", "pipe:1",
+            "-frames:v", "1", "-q:v", "2", "-vf", _DISPLAY_SCALE,
+            "-f", "mjpeg", "pipe:1",
         ],
         capture_output=True,
         timeout=_FFMPEG_STILL_TIMEOUT,
