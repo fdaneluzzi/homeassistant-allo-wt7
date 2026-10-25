@@ -27,7 +27,6 @@ executor thread, never on the event loop.
 from __future__ import annotations
 
 import logging
-import socket
 import subprocess
 import tempfile
 import threading
@@ -51,16 +50,6 @@ _FFMPEG_STILL_TIMEOUT = 20
 # the whole camera render tall/squished.  We normalize to square pixels at the
 # real display resolution so stills (and the aspect HA assumes) are correct.
 _DISPLAY_SCALE = "scale=1920:1080,setsar=1"
-
-
-def _port_listening(port: int) -> bool:
-    """True when something already holds ``port`` (bind fails), without connecting."""
-    with socket.socket() as sock:
-        try:
-            sock.bind(("127.0.0.1", port))
-        except OSError:
-            return True
-    return False
 
 
 def _sar_correct(jpeg: bytes) -> bytes:
@@ -153,67 +142,10 @@ class _RtspBridge:
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._ready = threading.Event()
-        self._relay: subprocess.Popen | None = None
 
     @property
     def url(self) -> str:
-        """Raw (anamorphic) feed; used for stills, which scale it themselves."""
         return f"rtsp://127.0.0.1:{self._rtsp_port}/live"
-
-    @property
-    def display_url(self) -> str:
-        """Square-pixel 16:9 feed for HA's stream component (falls back to raw)."""
-        if self._relay is not None and self._relay.poll() is None:
-            return f"rtsp://127.0.0.1:{self._rtsp_port + 1}/live"
-        return self.url
-
-    def _start_relay(self) -> None:
-        """Transcode the anamorphic feed to square pixels behind a 2nd RTSP port.
-
-        HA's ``stream`` only copies packets, so the 2:1 SAR can't be fixed
-        there.  ffmpeg listens for exactly one client (HA); when HA disconnects
-        the relay exits and the watchdog treats that as "viewer gone".
-        """
-        port = self._rtsp_port + 1
-        try:
-            self._relay = subprocess.Popen(
-                [
-                    "ffmpeg", "-nostdin", "-loglevel", "error",
-                    "-rtsp_transport", "tcp", "-i", self.url,
-                    "-an", "-vf", "scale=1280:720,setsar=1",
-                    "-c:v", "libx264", "-preset", "ultrafast",
-                    "-tune", "zerolatency", "-g", "30", "-pix_fmt", "yuv420p",
-                    "-f", "rtsp", "-rtsp_transport", "tcp",
-                    "-rtsp_flags", "listen", f"rtsp://127.0.0.1:{port}/live",
-                ],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-        except OSError:
-            _LOGGER.warning("ffmpeg unavailable — serving the raw anamorphic stream")
-            self._relay = None
-            return
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline and self._relay.poll() is None:
-            if _port_listening(port):
-                return
-            time.sleep(0.25)
-        _LOGGER.warning("wT7 aspect relay did not start — serving the raw stream")
-        self._stop_relay()
-
-    def ensure_relay(self) -> None:
-        """Re-arm the one-client relay after HA disconnected from it."""
-        if self._relay is None or self._relay.poll() is not None:
-            self._start_relay()
-
-    def _stop_relay(self) -> None:
-        relay, self._relay = self._relay, None
-        if relay is not None and relay.poll() is None:
-            relay.terminate()
-            try:
-                relay.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                relay.kill()
 
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
@@ -240,12 +172,8 @@ class _RtspBridge:
                 self._host, creds, self._channel, self._stream
             )
             with cam.serve_rtsp(port=self._rtsp_port) as stream:
-                self._start_relay()
                 self._ready.set()
-                try:
-                    self._watch(stream)
-                finally:
-                    self._stop_relay()
+                self._watch(stream)
         except Exception:  # noqa: BLE001
             _LOGGER.exception("wT7 RTSP bridge crashed")
         finally:
@@ -257,15 +185,10 @@ class _RtspBridge:
         last_active = started
         seen_viewer = False
         while not self._stop.is_set():
-            if self._relay is not None:
-                # The relay is our only steady RTSP client; it lives exactly as
-                # long as HA is viewing, so use it as the viewer signal.
-                clients = 1 if self._relay.poll() is None else 0
-            else:
-                try:
-                    clients = stream.server.client_count
-                except Exception:  # noqa: BLE001
-                    clients = 0
+            try:
+                clients = stream.server.client_count
+            except Exception:  # noqa: BLE001
+                clients = 0
             now = time.monotonic()
             if clients > 0:
                 seen_viewer = True
@@ -331,9 +254,7 @@ class WT7Video:
                     self._host, self._rtsp_port, self._channel, self._stream
                 )
                 self._bridge.start(creds)
-            else:
-                self._bridge.ensure_relay()
-            return self._bridge.display_url  # type: ignore[union-attr]
+            return self._bridge.url  # type: ignore[union-attr]
 
     def stop(self) -> None:
         """Release the device session (called on unload)."""
