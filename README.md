@@ -6,7 +6,7 @@
 
 Open the doors of your **Intelbras Allo wT7** video intercom from Home Assistant — and see who's at the door — over the local network, without keeping the official Allo Plus app running.
 
-> **Status: 0.5.0.** Door opening, doorbell ring detection, **live camera** and **ring snapshots** are working and validated against a real device (model `IDS9478AW`).  Two-way audio is out of scope for now.
+> **Status: 0.5.1.** Door opening, doorbell ring detection, **live camera** and **ring snapshots** are working and validated against a real device (model `IDS9478AW`).  Two-way audio is out of scope for now.
 
 ## Features
 
@@ -184,6 +184,12 @@ automation:
             image: /api/image_proxy/image.ultimo_toque
 ```
 
+> **Known limitation — live aspect ratio.** The doorbell encodes anamorphic
+> video (960x1080 with a 2:1 pixel aspect ratio, i.e. 16:9). Snapshots are
+> corrected to 16:9, but the live stream is passed through unchanged, so some
+> players may show it narrow/tall. Forcing a 16:9 aspect ratio on your
+> dashboard camera card works around it.
+
 > **Two-way audio** (intercom) is not implemented. The current stream is
 > video-only; adding audio — especially the talk-back path — is tracked on the
 > roadmap.
@@ -240,7 +246,9 @@ The cloud is contacted only to fetch two short-lived per-device credentials — 
 - [x] 0.1.0 — Open doors (as `lock` entities — deprecated)
 - [x] 0.2.0 — Switch to `button` entities + service action
 - [x] 0.3.0 — Doorbell ring detection via `event` entity
-- [x] 0.5.0 — Live `camera` entity + last-ring `image` snapshot (current)
+- [x] 0.5.0 — Live `camera` entity + last-ring `image` snapshot
+- [x] 0.5.1 — Single-session video manager, 16:9 corrected snapshots (current)
+- [ ] Square-pixel (16:9) live stream
 - [ ] Two-way audio (intercom)
 - [ ] Push to HACS default repositories
 
