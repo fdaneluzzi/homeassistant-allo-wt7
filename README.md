@@ -157,6 +157,16 @@ for login.
 Video is on demand: the doorbell only encodes and sends frames while the camera
 or stream is actually open, so there's no continuous traffic.
 
+> ⚠️ **Use the camera sparingly.** The doorbell supports only **one video
+> session at a time**. While the stream is open in Home Assistant, you
+> **cannot watch the camera in the Allo Plus app**, and the **physical video
+> intercom (indoor monitor) is disabled**. Do **not** leave the live stream open
+> permanently (dashboards with an always-on stream card) and do **not** use it
+> for continuous recording or an NVR. The integration releases the session
+> shortly after the last viewer disconnects (and caps a session at 10 minutes),
+> but anything that keeps re-opening the stream will keep the intercom locked.
+> Snapshots are brief and safe to use in automations.
+
 Snapshot example in an automation:
 
 ```yaml
