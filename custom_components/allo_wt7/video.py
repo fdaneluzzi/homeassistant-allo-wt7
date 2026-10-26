@@ -43,6 +43,7 @@ _STARTUP_GRACE_S = 30.0   # stop if no viewer ever connects within this window
 _IDLE_GRACE_S = 12.0      # stop this long after the last viewer disconnects
 _MAX_SESSION_S = 600.0    # absolute cap so HA can never hog the camera forever
 _FFMPEG_STILL_TIMEOUT = 20
+_LIVE_SETTLE_S = 3.0      # time for a freshly started live session to be accepted
 
 # The wT7 encodes anamorphic video: coded 960x1080 with a 2:1 pixel aspect
 # ratio (SAR), i.e. a 16:9 (1920x1080) display picture.  HA sizes the camera
@@ -142,6 +143,13 @@ class _RtspBridge:
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._ready = threading.Event()
+        self._holds = 0
+        self._holds_lock = threading.Lock()
+
+    def hold(self, delta: int) -> None:
+        """Keep the device session open (+1) / allow idle release again (-1)."""
+        with self._holds_lock:
+            self._holds = max(0, self._holds + delta)
 
     @property
     def url(self) -> str:
@@ -183,6 +191,7 @@ class _RtspBridge:
         """Hold the session open until idle, capped, or stopped."""
         started = time.monotonic()
         last_active = started
+        grace_from = started
         seen_viewer = False
         while not self._stop.is_set():
             try:
@@ -190,13 +199,16 @@ class _RtspBridge:
             except Exception:  # noqa: BLE001
                 clients = 0
             now = time.monotonic()
+            if self._holds > 0:
+                # Talk-back in progress: keep the session, restart the clocks.
+                last_active = grace_from = now
             if clients > 0:
                 seen_viewer = True
                 last_active = now
             if seen_viewer and clients == 0 and now - last_active > _IDLE_GRACE_S:
                 _LOGGER.debug("wT7 stream idle — releasing device session")
                 break
-            if not seen_viewer and now - started > _STARTUP_GRACE_S:
+            if not seen_viewer and now - grace_from > _STARTUP_GRACE_S:
                 _LOGGER.debug("wT7 stream had no viewer — releasing session")
                 break
             if now - started > _MAX_SESSION_S:
@@ -224,6 +236,7 @@ class WT7Video:
         self._stream = stream
         self._lock = threading.Lock()
         self._bridge: _RtspBridge | None = None
+        self._talk_lock = threading.Lock()
 
     def _streaming(self) -> bool:
         return self._bridge is not None and self._bridge.is_running()
@@ -255,6 +268,37 @@ class WT7Video:
                 )
                 self._bridge.start(creds)
             return self._bridge.url  # type: ignore[union-attr]
+
+    def send_audio(self, creds: StreamCredentials, source: str) -> None:
+        """Blocking (executor): play ``source`` through the door speaker.
+
+        The door only plays talk-back audio while a live video session is
+        open, so the live bridge is started (or reused) and held for the
+        duration, then released to the normal idle watchdog.
+        """
+        from .talk import speak  # noqa: PLC0415
+
+        with self._talk_lock:
+            with self._lock:
+                fresh = not self._streaming()
+                if fresh:
+                    self._bridge = _RtspBridge(
+                        self._host, self._rtsp_port, self._channel, self._stream
+                    )
+                    self._bridge.start(creds)
+                bridge = self._bridge
+                bridge.hold(1)  # type: ignore[union-attr]
+            try:
+                if fresh:
+                    time.sleep(_LIVE_SETTLE_S)  # let the device accept play
+                if not bridge.is_running():  # type: ignore[union-attr]
+                    raise RuntimeError(
+                        "the wT7 video session is busy (is the Allo Plus app "
+                        "open?) — talk-back needs it"
+                    )
+                speak(self._host, creds, source)
+            finally:
+                bridge.hold(-1)  # type: ignore[union-attr]
 
     def stop(self) -> None:
         """Release the device session (called on unload)."""

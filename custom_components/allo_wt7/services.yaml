@@ -29,3 +29,30 @@ open_door:
           min: 1
           max: 4
           mode: box
+
+send_audio:
+  name: Send audio to the door speaker
+  description: >
+    Plays an audio clip through the wT7's door speaker (talk-back), e.g. a
+    recorded message or a text-to-speech phrase. Max 60 seconds. While it
+    plays, the wT7's single video session is used, so the Allo Plus app and the
+    physical intercom are unavailable for that time.
+  fields:
+    entry_id:
+      name: Config entry
+      description: >
+        The Allo wT7 integration entry ID. Omit it if you have only one wT7.
+      required: false
+      selector:
+        config_entry:
+          integration: allo_wt7
+    media_content_id:
+      name: Audio
+      description: >
+        What to play: an http(s) URL, a `media-source://` item (including
+        `media-source://tts/...` for text-to-speech), a `/local/...` URL, or a
+        local file path that Home Assistant allows (e.g. /config/www/hi.mp3).
+      required: true
+      example: "media-source://tts/cloud?message=Ja+estou+indo"
+      selector:
+        text:

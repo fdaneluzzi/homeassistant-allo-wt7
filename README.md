@@ -6,7 +6,7 @@
 
 Open the doors of your **Intelbras Allo wT7** video intercom from Home Assistant — and see who's at the door — over the local network, without keeping the official Allo Plus app running.
 
-> **Status: 0.5.1.** Door opening, doorbell ring detection, **live camera** and **ring snapshots** are working and validated against a real device (model `IDS9478AW`).  Two-way audio is out of scope for now.
+> **Status: 0.6.0.** Door opening, doorbell ring detection, **live camera**, **ring snapshots** and **talk-back** (play audio through the door speaker) are working and validated against a real device (model `IDS9478AW`).  Listening to the door's microphone is not implemented yet.
 
 ## Features
 
@@ -15,6 +15,7 @@ Open the doors of your **Intelbras Allo wT7** video intercom from Home Assistant
 - 🖼️ **Last-ring snapshot** as an `image` entity — automatically captured when the doorbell is pressed, so a notification can show who rang
 - 🔘 **Open door(s)** as Home Assistant `button` entities (one press → one open pulse)
 - 🚪 **Dual-door support**: a wT7 typically controls a social door + a garage gate
+- 🔊 **Talk-back**: `allo_wt7.send_audio` plays a clip or a text-to-speech phrase through the door speaker
 - 🛠️ **Service action** `allo_wt7.open_door` for automations that need to pass `lock_number` dynamically
 - 🌐 **Local-first**: the cloud is contacted only on startup and every 12 h to refresh credentials; all doorbell polls and door-opens are direct LAN
 - 🔒 **Your password and PIN are stored encrypted by Home Assistant**, never transmitted in plaintext
@@ -190,9 +191,30 @@ automation:
 > players may show it narrow/tall. Forcing a 16:9 aspect ratio on your
 > dashboard camera card works around it.
 
-> **Two-way audio** (intercom) is not implemented. The current stream is
-> video-only; adding audio — especially the talk-back path — is tracked on the
-> roadmap.
+## Talk-back (speak through the door)
+
+`allo_wt7.send_audio` plays audio through the wT7's door speaker, so an
+automation can answer the visitor ("I'm coming!") or announce something.
+
+```yaml
+action: allo_wt7.send_audio
+data:
+  media_content_id: "media-source://tts/tts.google_translate_en_com?message=Ja+estou+indo"
+```
+
+`media_content_id` accepts an `http(s)` URL, a `media-source://` item
+(including `media-source://tts/...` for text-to-speech), a `/local/...` URL, or
+a local file path that Home Assistant allows (e.g. `/config/www/hi.mp3`). Any
+format FFmpeg can read works; it is converted to 8 kHz mono G.711 A-law. Clips
+are capped at 60 seconds.
+
+> ⚠️ **Talk-back uses the camera's single video session.** The door only plays
+> audio while a live video session is open, so the integration opens one for the
+> duration of the clip. During that time the Allo Plus app and the physical
+> indoor monitor cannot use the camera. If the Allo Plus app is already showing
+> the camera, the call fails with a "video session is busy" error.
+
+Receiving the door's microphone audio in Home Assistant is not implemented yet.
 
 ## Why `button` and not `lock`?
 
@@ -247,9 +269,10 @@ The cloud is contacted only to fetch two short-lived per-device credentials — 
 - [x] 0.2.0 — Switch to `button` entities + service action
 - [x] 0.3.0 — Doorbell ring detection via `event` entity
 - [x] 0.5.0 — Live `camera` entity + last-ring `image` snapshot
-- [x] 0.5.1 — Single-session video manager, 16:9 corrected snapshots (current)
+- [x] 0.5.1 — Single-session video manager, 16:9 corrected snapshots
+- [x] 0.6.0 — Talk-back: `allo_wt7.send_audio` (current)
 - [ ] Square-pixel (16:9) live stream
-- [ ] Two-way audio (intercom)
+- [ ] Listen to the door microphone (audio in the live stream)
 - [ ] Push to HACS default repositories
 
 ## Reporting issues
