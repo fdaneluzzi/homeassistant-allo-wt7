@@ -41,5 +41,57 @@
         }
       }
     }
+  },
+  "entity": {
+    "camera": {
+      "camera": {
+        "name": "Câmera"
+      }
+    },
+    "event": {
+      "doorbell": {
+        "name": "Campainha"
+      }
+    },
+    "image": {
+      "last_ring": {
+        "name": "Último toque"
+      }
+    },
+    "media_player": {
+      "speaker": {
+        "name": "Alto-falante"
+      }
+    }
+  },
+  "services": {
+    "open_door": {
+      "name": "Abrir porta",
+      "description": "Dispara um pulso de abertura no wT7 para o número de fechadura indicado. Use quando uma automação não deve depender de quais entidades de porta estão expostas.",
+      "fields": {
+        "entry_id": {
+          "name": "Entrada de configuração",
+          "description": "A entrada do Allo wT7. Pode omitir se houver só um wT7."
+        },
+        "lock_number": {
+          "name": "Número da fechadura",
+          "description": "Qual relé acionar. 1 = porta social, 2 = portão da garagem (ou o que você mapeou). Padrão: 1."
+        }
+      }
+    },
+    "send_audio": {
+      "name": "Enviar áudio ao alto-falante da porta",
+      "description": "Toca um áudio no alto-falante da porta do wT7 (fala), por exemplo uma mensagem gravada ou uma frase em texto para voz. Máximo de 60 segundos. Enquanto toca, a única sessão de vídeo do porteiro é usada, então o app Allo Plus e o porteiro físico ficam indisponíveis.",
+      "fields": {
+        "entry_id": {
+          "name": "Entrada de configuração",
+          "description": "A entrada do Allo wT7. Pode omitir se houver só um wT7."
+        },
+        "media_content_id": {
+          "name": "Áudio",
+          "description": "O que tocar: uma URL http(s), um item media-source:// (incluindo media-source://tts/... para texto para voz), uma URL /local/... ou um caminho de arquivo permitido pelo Home Assistant (ex.: /config/www/oi.mp3)."
+        }
+      }
+    }
   }
 }

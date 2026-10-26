@@ -1,13 +1,20 @@
 {
   "domain": "allo_wt7",
   "name": "Intelbras Allo wT7",
-  "version": "0.5.1",
-  "documentation": "https://github.com/fdaneluzzi/homeassistant-allo-wt7",
-  "issue_tracker": "https://github.com/fdaneluzzi/homeassistant-allo-wt7/issues",
-  "codeowners": ["@fdaneluzzi"],
+  "codeowners": [
+    "@fdaneluzzi"
+  ],
   "config_flow": true,
-  "iot_class": "local_polling",
+  "dependencies": [
+    "stream",
+    "media_source"
+  ],
+  "documentation": "https://github.com/fdaneluzzi/homeassistant-allo-wt7",
   "integration_type": "device",
-  "requirements": ["quii-helper==0.2.0"],
-  "dependencies": ["stream"]
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/fdaneluzzi/homeassistant-allo-wt7/issues",
+  "requirements": [
+    "quii-helper==0.3.0"
+  ],
+  "version": "0.6.0"
 }

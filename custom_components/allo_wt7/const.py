@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 DOMAIN = "allo_wt7"
-PLATFORMS = ["button", "event", "camera", "image"]
+PLATFORMS = ["button", "event", "camera", "image", "media_player"]
 
 MANUFACTURER = "Intelbras"
 MODEL = "Allo wT7"
@@ -79,5 +79,7 @@ EVENT_DOORBELL_RING = f"{DOMAIN}_doorbell_ring"
 
 # --- Services
 SERVICE_OPEN_DOOR = "open_door"
+SERVICE_SEND_AUDIO = "send_audio"
+ATTR_MEDIA_CONTENT_ID = "media_content_id"
 ATTR_LOCK_NUMBER = "lock_number"
 ATTR_REASON = "reason"

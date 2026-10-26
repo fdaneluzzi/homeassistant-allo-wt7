@@ -43,6 +43,8 @@ _STARTUP_GRACE_S = 30.0   # stop if no viewer ever connects within this window
 _IDLE_GRACE_S = 12.0      # stop this long after the last viewer disconnects
 _MAX_SESSION_S = 600.0    # absolute cap so HA can never hog the camera forever
 _FFMPEG_STILL_TIMEOUT = 20
+_MEDIA_READY_TIMEOUT_S = 15.0  # wait for the device to deliver A/V
+_LIVE_SETTLE_S = 3.0      # time for a freshly started live session to be accepted
 
 # The wT7 encodes anamorphic video: coded 960x1080 with a 2:1 pixel aspect
 # ratio (SAR), i.e. a 16:9 (1920x1080) display picture.  HA sizes the camera
@@ -66,6 +68,28 @@ def _sar_correct(jpeg: bytes) -> bytes:
     return proc.stdout
 
 
+
+def _patch_audio_channels() -> None:
+    """Compat shim: the wT7 reports 0 channels in its audio frame headers.
+
+    ``quii-helper`` rejects such frames, which silently drops all audio.  The
+    wT7's G.711 audio is mono, so treat a missing channel count as 1.
+    """
+    from quii_helper.media.audio.frames import CameraAudioFrame  # noqa: PLC0415
+
+    if getattr(CameraAudioFrame, "_wt7_channels_patched", False):
+        return
+    original = CameraAudioFrame.from_cpacket.__func__
+
+    def from_cpacket(cls, frame):
+        if frame.get("channels", 0) <= 0:
+            frame = {**frame, "channels": 1}
+        return original(cls, frame)
+
+    CameraAudioFrame.from_cpacket = classmethod(from_cpacket)
+    CameraAudioFrame._wt7_channels_patched = True
+
+
 def _build_lan_camera(
     host: str,
     creds: StreamCredentials,
@@ -80,6 +104,8 @@ def _build_lan_camera(
     than breaking the whole integration import.
     """
     from quii_helper import Camera  # noqa: PLC0415
+
+    _patch_audio_channels()
 
     return Camera(
         connection_mode="lan",
@@ -142,6 +168,13 @@ class _RtspBridge:
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._ready = threading.Event()
+        self._holds = 0
+        self._holds_lock = threading.Lock()
+
+    def hold(self, delta: int) -> None:
+        """Keep the device session open (+1) / allow idle release again (-1)."""
+        with self._holds_lock:
+            self._holds = max(0, self._holds + delta)
 
     @property
     def url(self) -> str:
@@ -163,26 +196,58 @@ class _RtspBridge:
             daemon=True,
         )
         self._thread.start()
-        self._ready.wait(timeout=20)
+        self._ready.wait(timeout=40)
         return self.url
 
     def _run(self, creds: StreamCredentials) -> None:
         try:
-            cam = _build_lan_camera(
-                self._host, creds, self._channel, self._stream
-            )
-            with cam.serve_rtsp(port=self._rtsp_port) as stream:
-                self._ready.set()
-                self._watch(stream)
+            for with_audio in (True, False):
+                cam = _build_lan_camera(
+                    self._host, creds, self._channel, self._stream
+                )
+                with cam.serve_rtsp(
+                    port=self._rtsp_port, audio=with_audio
+                ) as stream:
+                    if not self._await_media(stream, with_audio):
+                        if with_audio and not self._stop.is_set():
+                            _LOGGER.warning(
+                                "wT7 sent no audio — falling back to video only"
+                            )
+                            continue
+                    self._ready.set()
+                    self._watch(stream)
+                    return
         except Exception:  # noqa: BLE001
             _LOGGER.exception("wT7 RTSP bridge crashed")
         finally:
             self._ready.set()  # unblock any waiter even on failure
 
+    @staticmethod
+    def _media_ready(stream, with_audio: bool) -> bool:
+        server = stream.server
+        if not (server.video_ready.is_set() and server.parameter_sets):
+            return False
+        return (not with_audio) or (
+            server.audio_ready.is_set() and server.audio_format is not None
+        )
+
+    def _await_media(self, stream, with_audio: bool) -> bool:
+        """Wait until video (and audio) are flowing, so DESCRIBE never 503s."""
+        deadline = time.monotonic() + _MEDIA_READY_TIMEOUT_S
+        while time.monotonic() < deadline and not self._stop.is_set():
+            try:
+                if self._media_ready(stream, with_audio):
+                    return True
+            except Exception:  # noqa: BLE001
+                return False
+            time.sleep(0.2)
+        return False
+
     def _watch(self, stream) -> None:
         """Hold the session open until idle, capped, or stopped."""
         started = time.monotonic()
         last_active = started
+        grace_from = started
         seen_viewer = False
         while not self._stop.is_set():
             try:
@@ -190,13 +255,16 @@ class _RtspBridge:
             except Exception:  # noqa: BLE001
                 clients = 0
             now = time.monotonic()
+            if self._holds > 0:
+                # Talk-back in progress: keep the session, restart the clocks.
+                last_active = grace_from = now
             if clients > 0:
                 seen_viewer = True
                 last_active = now
             if seen_viewer and clients == 0 and now - last_active > _IDLE_GRACE_S:
                 _LOGGER.debug("wT7 stream idle — releasing device session")
                 break
-            if not seen_viewer and now - started > _STARTUP_GRACE_S:
+            if not seen_viewer and now - grace_from > _STARTUP_GRACE_S:
                 _LOGGER.debug("wT7 stream had no viewer — releasing session")
                 break
             if now - started > _MAX_SESSION_S:
@@ -224,6 +292,7 @@ class WT7Video:
         self._stream = stream
         self._lock = threading.Lock()
         self._bridge: _RtspBridge | None = None
+        self._talk_lock = threading.Lock()
 
     def _streaming(self) -> bool:
         return self._bridge is not None and self._bridge.is_running()
@@ -255,6 +324,42 @@ class WT7Video:
                 )
                 self._bridge.start(creds)
             return self._bridge.url  # type: ignore[union-attr]
+
+    def send_audio(
+        self,
+        creds: StreamCredentials,
+        source: str,
+        cancel: threading.Event | None = None,
+    ) -> None:
+        """Blocking (executor): play ``source`` through the door speaker.
+
+        The door only plays talk-back audio while a live video session is
+        open, so the live bridge is started (or reused) and held for the
+        duration, then released to the normal idle watchdog.
+        """
+        from .talk import speak  # noqa: PLC0415
+
+        with self._talk_lock:
+            with self._lock:
+                fresh = not self._streaming()
+                if fresh:
+                    self._bridge = _RtspBridge(
+                        self._host, self._rtsp_port, self._channel, self._stream
+                    )
+                    self._bridge.start(creds)
+                bridge = self._bridge
+                bridge.hold(1)  # type: ignore[union-attr]
+            try:
+                if fresh:
+                    time.sleep(_LIVE_SETTLE_S)  # let the device accept play
+                if not bridge.is_running():  # type: ignore[union-attr]
+                    raise RuntimeError(
+                        "the wT7 video session is busy (is the Allo Plus app "
+                        "open?) — talk-back needs it"
+                    )
+                speak(self._host, creds, source, cancel)
+            finally:
+                bridge.hold(-1)  # type: ignore[union-attr]
 
     def stop(self) -> None:
         """Release the device session (called on unload)."""

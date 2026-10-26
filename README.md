@@ -6,15 +6,16 @@
 
 Open the doors of your **Intelbras Allo wT7** video intercom from Home Assistant — and see who's at the door — over the local network, without keeping the official Allo Plus app running.
 
-> **Status: 0.5.0.** Door opening, doorbell ring detection, **live camera** and **ring snapshots** are working and validated against a real device (model `IDS9478AW`).  Two-way audio is out of scope for now.
+> **Status: 0.6.0.** Door opening, doorbell ring detection, **live camera**, **ring snapshots** and **talk-back** (play audio through the door speaker) are working and validated against a real device (model `IDS9478AW`).  The live stream carries the door's microphone audio.
 
 ## Features
 
 - 🔔 **Doorbell ring detection** as a Home Assistant `event` entity — trigger any automation the moment someone rings the bell (typ. 2–3 s latency, pure LAN polling)
-- 📹 **Live camera** as a Home Assistant `camera` entity — still image and live H.264 stream, served over the direct LAN video channel
+- 📹 **Live camera** as a Home Assistant `camera` entity — still image and live H.264 stream **with the door's audio**, served over the direct LAN video channel
 - 🖼️ **Last-ring snapshot** as an `image` entity — automatically captured when the doorbell is pressed, so a notification can show who rang
 - 🔘 **Open door(s)** as Home Assistant `button` entities (one press → one open pulse)
 - 🚪 **Dual-door support**: a wT7 typically controls a social door + a garage gate
+- 🔊 **Talk-back**: a `media_player` entity for the door speaker (works with `tts.speak`, `media_player.play_media` and the media browser) plus the `allo_wt7.send_audio` service
 - 🛠️ **Service action** `allo_wt7.open_door` for automations that need to pass `lock_number` dynamically
 - 🌐 **Local-first**: the cloud is contacted only on startup and every 12 h to refresh credentials; all doorbell polls and door-opens are direct LAN
 - 🔒 **Your password and PIN are stored encrypted by Home Assistant**, never transmitted in plaintext
@@ -157,6 +158,16 @@ for login.
 Video is on demand: the doorbell only encodes and sends frames while the camera
 or stream is actually open, so there's no continuous traffic.
 
+> ⚠️ **Use the camera sparingly.** The doorbell supports only **one video
+> session at a time**. While the stream is open in Home Assistant, you
+> **cannot watch the camera in the Allo Plus app**, and the **physical video
+> intercom (indoor monitor) is disabled**. Do **not** leave the live stream open
+> permanently (dashboards with an always-on stream card) and do **not** use it
+> for continuous recording or an NVR. The integration releases the session
+> shortly after the last viewer disconnects (and caps a session at 10 minutes),
+> but anything that keeps re-opening the stream will keep the intercom locked.
+> Snapshots are brief and safe to use in automations.
+
 Snapshot example in an automation:
 
 ```yaml
@@ -174,9 +185,49 @@ automation:
             image: /api/image_proxy/image.ultimo_toque
 ```
 
-> **Two-way audio** (intercom) is not implemented. The current stream is
-> video-only; adding audio — especially the talk-back path — is tracked on the
-> roadmap.
+> **Known limitation — live aspect ratio.** The doorbell encodes anamorphic
+> video (960x1080 with a 2:1 pixel aspect ratio, i.e. 16:9). Snapshots are
+> corrected to 16:9, but the live stream is passed through unchanged, so some
+> players may show it narrow/tall. Forcing a 16:9 aspect ratio on your
+> dashboard camera card works around it.
+
+## Talk-back (speak through the door)
+
+The door speaker is exposed as a `media_player` entity (e.g.
+`media_player.<device>_alto_falante`), so the standard Home Assistant tools work:
+
+```yaml
+action: tts.speak
+target:
+  entity_id: tts.google_translate_en_com
+data:
+  media_player_entity_id: media_player.garagem_porteiro_alto_falante
+  message: "I'm coming!"
+```
+
+`media_player.play_media` and `media_player.media_stop` work too, and you can
+pick audio from the media browser. The `allo_wt7.send_audio` service does the
+same without an entity:
+
+```yaml
+action: allo_wt7.send_audio
+data:
+  media_content_id: "media-source://tts/tts.google_translate_en_com?message=Ja+estou+indo"
+```
+
+`media_content_id` accepts an `http(s)` URL, a `media-source://` item
+(including `media-source://tts/...` for text-to-speech), a `/local/...` URL, or
+a local file path that Home Assistant allows (e.g. `/config/www/hi.mp3`). Any
+format FFmpeg can read works; it is converted to 8 kHz mono G.711 A-law. Clips
+are capped at 60 seconds.
+
+> ⚠️ **Talk-back uses the camera's single video session.** The door only plays
+> audio while a live video session is open, so the integration opens one for the
+> duration of the clip. During that time the Allo Plus app and the physical
+> indoor monitor cannot use the camera. If the Allo Plus app is already showing
+> the camera, the call fails with a "video session is busy" error.
+
+Hearing the visitor works through the camera's live stream (the player must not be muted).
 
 ## Why `button` and not `lock`?
 
@@ -230,8 +281,12 @@ The cloud is contacted only to fetch two short-lived per-device credentials — 
 - [x] 0.1.0 — Open doors (as `lock` entities — deprecated)
 - [x] 0.2.0 — Switch to `button` entities + service action
 - [x] 0.3.0 — Doorbell ring detection via `event` entity
-- [x] 0.5.0 — Live `camera` entity + last-ring `image` snapshot (current)
-- [ ] Two-way audio (intercom)
+- [x] 0.5.0 — Live `camera` entity + last-ring `image` snapshot
+- [x] 0.5.1 — Single-session video manager, 16:9 corrected snapshots
+- [x] 0.6.0 — Talk-back and door audio (current)
+- [ ] Square-pixel (16:9) live stream
+- [x] Door audio in the live stream and a `media_player` for the door speaker
+- [ ] Talk with your computer's microphone while watching the video
 - [ ] Push to HACS default repositories
 
 ## Reporting issues

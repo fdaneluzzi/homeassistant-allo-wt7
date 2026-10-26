@@ -41,5 +41,57 @@
         }
       }
     }
+  },
+  "entity": {
+    "camera": {
+      "camera": {
+        "name": "Camera"
+      }
+    },
+    "event": {
+      "doorbell": {
+        "name": "Doorbell"
+      }
+    },
+    "image": {
+      "last_ring": {
+        "name": "Last ring"
+      }
+    },
+    "media_player": {
+      "speaker": {
+        "name": "Speaker"
+      }
+    }
+  },
+  "services": {
+    "open_door": {
+      "name": "Open door",
+      "description": "Fires one open-door pulse on the wT7 for a given lock number. Use it when an automation should not depend on which door entities are exposed.",
+      "fields": {
+        "entry_id": {
+          "name": "Config entry",
+          "description": "The Allo wT7 config entry. Omit it if you have only one wT7."
+        },
+        "lock_number": {
+          "name": "Lock number",
+          "description": "Which relay to pulse. 1 = social door, 2 = garage gate (or whatever you mapped). Defaults to 1."
+        }
+      }
+    },
+    "send_audio": {
+      "name": "Send audio to the door speaker",
+      "description": "Plays an audio clip through the wT7 door speaker (talk-back), e.g. a recorded message or a text-to-speech phrase. Max 60 seconds. While it plays the doorbell's single video session is used, so the Allo Plus app and the physical intercom are unavailable.",
+      "fields": {
+        "entry_id": {
+          "name": "Config entry",
+          "description": "The Allo wT7 config entry. Omit it if you have only one wT7."
+        },
+        "media_content_id": {
+          "name": "Audio",
+          "description": "What to play: an http(s) URL, a media-source:// item (including media-source://tts/... for text-to-speech), a /local/... URL, or a local file path that Home Assistant allows (e.g. /config/www/hi.mp3)."
+        }
+      }
+    }
   }
 }

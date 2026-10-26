@@ -36,7 +36,7 @@ class AlloWT7LastRingImage(ImageEntity):
     """Holds the JPEG captured on the most recent doorbell ring."""
 
     _attr_has_entity_name = True
-    _attr_name = "Último toque"
+    _attr_translation_key = "last_ring"
     _attr_icon = "mdi:image-frame"
     _attr_content_type = "image/jpeg"
 
