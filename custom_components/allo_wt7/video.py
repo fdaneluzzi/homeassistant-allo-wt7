@@ -269,7 +269,12 @@ class WT7Video:
                 self._bridge.start(creds)
             return self._bridge.url  # type: ignore[union-attr]
 
-    def send_audio(self, creds: StreamCredentials, source: str) -> None:
+    def send_audio(
+        self,
+        creds: StreamCredentials,
+        source: str,
+        cancel: threading.Event | None = None,
+    ) -> None:
         """Blocking (executor): play ``source`` through the door speaker.
 
         The door only plays talk-back audio while a live video session is
@@ -296,7 +301,7 @@ class WT7Video:
                         "the wT7 video session is busy (is the Allo Plus app "
                         "open?) — talk-back needs it"
                     )
-                speak(self._host, creds, source)
+                speak(self._host, creds, source, cancel)
             finally:
                 bridge.hold(-1)  # type: ignore[union-attr]
 

@@ -9,5 +9,5 @@
   "iot_class": "local_polling",
   "integration_type": "device",
   "requirements": ["quii-helper==0.2.0"],
-  "dependencies": ["stream"]
+  "dependencies": ["stream", "media_source"]
 }

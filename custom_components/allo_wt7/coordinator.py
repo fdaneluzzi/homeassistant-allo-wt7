@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time
 from typing import Any
 
@@ -33,6 +34,7 @@ from .client import (
     StreamCredentials,
     generate_client_id,
 )
+from .audio import async_resolve_audio_source
 from .video import WT7Video
 from .const import (
     CONF_DOORBELL_ENABLED,
@@ -329,6 +331,21 @@ class AlloWT7Coordinator(DataUpdateCoordinator):
                 raise
         # unreachable, but keep type-checkers happy
         raise RuntimeError("open_door retry loop fell through")
+
+    async def async_send_audio(
+        self, media_id: str, cancel: threading.Event | None = None
+    ) -> None:
+        """Play ``media_id`` through the door speaker (talk-back)."""
+        if self.video is None:
+            raise HomeAssistantError("Allo wT7: video channel is not available")
+        source = await async_resolve_audio_source(self._hass, media_id)
+        creds = await self.async_get_stream_credentials()
+        try:
+            await self._hass.async_add_executor_job(
+                self.video.send_audio, creds, source, cancel
+            )
+        except RuntimeError as err:
+            raise HomeAssistantError(f"Allo wT7: {err}") from err
 
     async def async_stop_video(self) -> None:
         """Release any open video session (called on entry unload)."""

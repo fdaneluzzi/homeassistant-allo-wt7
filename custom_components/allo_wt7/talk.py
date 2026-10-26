@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import struct
 import subprocess
+import threading
 import time
 
 from .client import StreamCredentials
@@ -173,7 +174,12 @@ class TalkSession:
             pass
 
 
-def speak(host: str, creds: StreamCredentials, source: str) -> None:
+def speak(
+    host: str,
+    creds: StreamCredentials,
+    source: str,
+    cancel: threading.Event | None = None,
+) -> None:
     """Decode ``source`` with FFmpeg and play it through the door speaker.
 
     ``source`` is anything FFmpeg can read (URL or local file).  Audio is
@@ -194,6 +200,8 @@ def speak(host: str, creds: StreamCredentials, source: str) -> None:
         start = time.monotonic()
         frames = 0
         while True:
+            if cancel is not None and cancel.is_set():
+                break
             chunk = ffmpeg.stdout.read(_FRAME_BYTES)  # type: ignore[union-attr]
             if not chunk:
                 break
@@ -208,7 +216,7 @@ def speak(host: str, creds: StreamCredentials, source: str) -> None:
             delay = start + frames * _FRAME_S - time.monotonic()
             if delay > 0:
                 time.sleep(delay)
-        if frames == 0:
+        if frames == 0 and not (cancel is not None and cancel.is_set()):
             err = ffmpeg.stderr.read().decode(errors="replace").strip()  # type: ignore[union-attr]
             raise RuntimeError(f"ffmpeg produced no audio: {err[:200] or 'unreadable source'}")
         for _ in range(6):  # let the tail drain, then end on silence

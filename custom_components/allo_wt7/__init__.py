@@ -55,38 +55,6 @@ def _get_coordinator(hass: HomeAssistant, call: ServiceCall) -> AlloWT7Coordinat
     return next(iter(entries.values()))
 
 
-async def _async_resolve_audio_source(hass: HomeAssistant, media_id: str) -> str:
-    """Turn a media_content_id into something FFmpeg can open."""
-    if media_id.startswith("media-source://"):
-        from homeassistant.components import media_source  # noqa: PLC0415
-        from homeassistant.components.media_player import (  # noqa: PLC0415
-            async_process_play_media_url,
-        )
-
-        try:
-            play = await media_source.async_resolve_media(hass, media_id, None)
-        except Exception as err:  # noqa: BLE001
-            raise HomeAssistantError(
-                f"Allo wT7: cannot resolve {media_id!r}: {err}"
-            ) from err
-        return async_process_play_media_url(hass, play.url)
-    if media_id.startswith(("http://", "https://")):
-        return media_id
-    if media_id.startswith("/") and media_id.startswith(("/api/", "/local/", "/media/")):
-        # Relative HA URL (e.g. /local/beep.wav) -> absolute, signed if needed.
-        from homeassistant.components.media_player import (  # noqa: PLC0415
-            async_process_play_media_url,
-        )
-
-        return async_process_play_media_url(hass, media_id)
-    if not hass.config.is_allowed_path(media_id):
-        raise HomeAssistantError(
-            f"Allo wT7: {media_id!r} is not an allowed path "
-            "(add it to allowlist_external_dirs, or use /config/www)"
-        )
-    return media_id
-
-
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Allo wT7 from a config entry."""
     coordinator = AlloWT7Coordinator(hass, entry)
@@ -106,18 +74,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         async def _handle_send_audio(call: ServiceCall) -> None:
             coord = _get_coordinator(hass, call)
-            if coord.video is None:
-                raise HomeAssistantError("Allo wT7: video channel is not available")
-            source = await _async_resolve_audio_source(
-                hass, call.data[ATTR_MEDIA_CONTENT_ID]
-            )
-            creds = await coord.async_get_stream_credentials()
-            try:
-                await hass.async_add_executor_job(
-                    coord.video.send_audio, creds, source
-                )
-            except RuntimeError as err:
-                raise HomeAssistantError(f"Allo wT7: {err}") from err
+            await coord.async_send_audio(call.data[ATTR_MEDIA_CONTENT_ID])
 
         hass.services.async_register(
             DOMAIN, SERVICE_OPEN_DOOR, _handle_open_door, schema=SERVICE_OPEN_DOOR_SCHEMA
