@@ -8,6 +8,6 @@
   "config_flow": true,
   "iot_class": "local_polling",
   "integration_type": "device",
-  "requirements": ["quii-helper==0.2.0"],
+  "requirements": ["quii-helper==0.3.0"],
   "dependencies": ["stream", "media_source"]
 }

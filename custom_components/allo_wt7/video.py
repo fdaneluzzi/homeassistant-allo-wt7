@@ -43,6 +43,7 @@ _STARTUP_GRACE_S = 30.0   # stop if no viewer ever connects within this window
 _IDLE_GRACE_S = 12.0      # stop this long after the last viewer disconnects
 _MAX_SESSION_S = 600.0    # absolute cap so HA can never hog the camera forever
 _FFMPEG_STILL_TIMEOUT = 20
+_MEDIA_READY_TIMEOUT_S = 15.0  # wait for the device to deliver A/V
 _LIVE_SETTLE_S = 3.0      # time for a freshly started live session to be accepted
 
 # The wT7 encodes anamorphic video: coded 960x1080 with a 2:1 pixel aspect
@@ -67,6 +68,28 @@ def _sar_correct(jpeg: bytes) -> bytes:
     return proc.stdout
 
 
+
+def _patch_audio_channels() -> None:
+    """Compat shim: the wT7 reports 0 channels in its audio frame headers.
+
+    ``quii-helper`` rejects such frames, which silently drops all audio.  The
+    wT7's G.711 audio is mono, so treat a missing channel count as 1.
+    """
+    from quii_helper.media.audio.frames import CameraAudioFrame  # noqa: PLC0415
+
+    if getattr(CameraAudioFrame, "_wt7_channels_patched", False):
+        return
+    original = CameraAudioFrame.from_cpacket.__func__
+
+    def from_cpacket(cls, frame):
+        if frame.get("channels", 0) <= 0:
+            frame = {**frame, "channels": 1}
+        return original(cls, frame)
+
+    CameraAudioFrame.from_cpacket = classmethod(from_cpacket)
+    CameraAudioFrame._wt7_channels_patched = True
+
+
 def _build_lan_camera(
     host: str,
     creds: StreamCredentials,
@@ -81,6 +104,8 @@ def _build_lan_camera(
     than breaking the whole integration import.
     """
     from quii_helper import Camera  # noqa: PLC0415
+
+    _patch_audio_channels()
 
     return Camera(
         connection_mode="lan",
@@ -171,21 +196,52 @@ class _RtspBridge:
             daemon=True,
         )
         self._thread.start()
-        self._ready.wait(timeout=20)
+        self._ready.wait(timeout=40)
         return self.url
 
     def _run(self, creds: StreamCredentials) -> None:
         try:
-            cam = _build_lan_camera(
-                self._host, creds, self._channel, self._stream
-            )
-            with cam.serve_rtsp(port=self._rtsp_port) as stream:
-                self._ready.set()
-                self._watch(stream)
+            for with_audio in (True, False):
+                cam = _build_lan_camera(
+                    self._host, creds, self._channel, self._stream
+                )
+                with cam.serve_rtsp(
+                    port=self._rtsp_port, audio=with_audio
+                ) as stream:
+                    if not self._await_media(stream, with_audio):
+                        if with_audio and not self._stop.is_set():
+                            _LOGGER.warning(
+                                "wT7 sent no audio — falling back to video only"
+                            )
+                            continue
+                    self._ready.set()
+                    self._watch(stream)
+                    return
         except Exception:  # noqa: BLE001
             _LOGGER.exception("wT7 RTSP bridge crashed")
         finally:
             self._ready.set()  # unblock any waiter even on failure
+
+    @staticmethod
+    def _media_ready(stream, with_audio: bool) -> bool:
+        server = stream.server
+        if not (server.video_ready.is_set() and server.parameter_sets):
+            return False
+        return (not with_audio) or (
+            server.audio_ready.is_set() and server.audio_format is not None
+        )
+
+    def _await_media(self, stream, with_audio: bool) -> bool:
+        """Wait until video (and audio) are flowing, so DESCRIBE never 503s."""
+        deadline = time.monotonic() + _MEDIA_READY_TIMEOUT_S
+        while time.monotonic() < deadline and not self._stop.is_set():
+            try:
+                if self._media_ready(stream, with_audio):
+                    return True
+            except Exception:  # noqa: BLE001
+                return False
+            time.sleep(0.2)
+        return False
 
     def _watch(self, stream) -> None:
         """Hold the session open until idle, capped, or stopped."""

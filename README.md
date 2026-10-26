@@ -6,16 +6,16 @@
 
 Open the doors of your **Intelbras Allo wT7** video intercom from Home Assistant — and see who's at the door — over the local network, without keeping the official Allo Plus app running.
 
-> **Status: 0.6.0.** Door opening, doorbell ring detection, **live camera**, **ring snapshots** and **talk-back** (play audio through the door speaker) are working and validated against a real device (model `IDS9478AW`).  Listening to the door's microphone is not implemented yet.
+> **Status: 0.6.0.** Door opening, doorbell ring detection, **live camera**, **ring snapshots** and **talk-back** (play audio through the door speaker) are working and validated against a real device (model `IDS9478AW`).  The live stream carries the door's microphone audio.
 
 ## Features
 
 - 🔔 **Doorbell ring detection** as a Home Assistant `event` entity — trigger any automation the moment someone rings the bell (typ. 2–3 s latency, pure LAN polling)
-- 📹 **Live camera** as a Home Assistant `camera` entity — still image and live H.264 stream, served over the direct LAN video channel
+- 📹 **Live camera** as a Home Assistant `camera` entity — still image and live H.264 stream **with the door's audio**, served over the direct LAN video channel
 - 🖼️ **Last-ring snapshot** as an `image` entity — automatically captured when the doorbell is pressed, so a notification can show who rang
 - 🔘 **Open door(s)** as Home Assistant `button` entities (one press → one open pulse)
 - 🚪 **Dual-door support**: a wT7 typically controls a social door + a garage gate
-- 🔊 **Talk-back**: `allo_wt7.send_audio` plays a clip or a text-to-speech phrase through the door speaker
+- 🔊 **Talk-back**: a `media_player` entity for the door speaker (works with `tts.speak`, `media_player.play_media` and the media browser) plus the `allo_wt7.send_audio` service
 - 🛠️ **Service action** `allo_wt7.open_door` for automations that need to pass `lock_number` dynamically
 - 🌐 **Local-first**: the cloud is contacted only on startup and every 12 h to refresh credentials; all doorbell polls and door-opens are direct LAN
 - 🔒 **Your password and PIN are stored encrypted by Home Assistant**, never transmitted in plaintext
@@ -193,8 +193,21 @@ automation:
 
 ## Talk-back (speak through the door)
 
-`allo_wt7.send_audio` plays audio through the wT7's door speaker, so an
-automation can answer the visitor ("I'm coming!") or announce something.
+The door speaker is exposed as a `media_player` entity (e.g.
+`media_player.<device>_alto_falante`), so the standard Home Assistant tools work:
+
+```yaml
+action: tts.speak
+target:
+  entity_id: tts.google_translate_en_com
+data:
+  media_player_entity_id: media_player.garagem_porteiro_alto_falante
+  message: "I'm coming!"
+```
+
+`media_player.play_media` and `media_player.media_stop` work too, and you can
+pick audio from the media browser. The `allo_wt7.send_audio` service does the
+same without an entity:
 
 ```yaml
 action: allo_wt7.send_audio
@@ -214,7 +227,7 @@ are capped at 60 seconds.
 > indoor monitor cannot use the camera. If the Allo Plus app is already showing
 > the camera, the call fails with a "video session is busy" error.
 
-Receiving the door's microphone audio in Home Assistant is not implemented yet.
+Hearing the visitor works through the camera's live stream (the player must not be muted).
 
 ## Why `button` and not `lock`?
 
@@ -270,9 +283,10 @@ The cloud is contacted only to fetch two short-lived per-device credentials — 
 - [x] 0.3.0 — Doorbell ring detection via `event` entity
 - [x] 0.5.0 — Live `camera` entity + last-ring `image` snapshot
 - [x] 0.5.1 — Single-session video manager, 16:9 corrected snapshots
-- [x] 0.6.0 — Talk-back: `allo_wt7.send_audio` (current)
+- [x] 0.6.0 — Talk-back and door audio (current)
 - [ ] Square-pixel (16:9) live stream
-- [ ] Listen to the door microphone (audio in the live stream)
+- [x] Door audio in the live stream and a `media_player` for the door speaker
+- [ ] Talk with your computer's microphone while watching the video
 - [ ] Push to HACS default repositories
 
 ## Reporting issues
