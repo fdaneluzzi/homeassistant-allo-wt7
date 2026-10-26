@@ -45,7 +45,7 @@ class AlloWT7Camera(Camera):
     """Live view of the wT7 doorbell camera."""
 
     _attr_has_entity_name = True
-    _attr_name = "Câmera"
+    _attr_translation_key = "camera"
     _attr_icon = "mdi:doorbell-video"
     _attr_supported_features = CameraEntityFeature.STREAM
 

@@ -42,7 +42,7 @@ class AlloWT7Speaker(MediaPlayerEntity):
     """The wT7 door speaker: play a clip or a TTS phrase to the visitor."""
 
     _attr_has_entity_name = True
-    _attr_name = "Alto-falante"
+    _attr_translation_key = "speaker"
     _attr_icon = "mdi:bullhorn"
     _attr_supported_features = (
         MediaPlayerEntityFeature.PLAY_MEDIA

@@ -51,7 +51,7 @@ class AlloWT7DoorbellEvent(EventEntity):
     """
 
     _attr_has_entity_name = True
-    _attr_name = "Campainha"
+    _attr_translation_key = "doorbell"
     _attr_icon = "mdi:doorbell"
     _attr_event_types = ["ring"]
 

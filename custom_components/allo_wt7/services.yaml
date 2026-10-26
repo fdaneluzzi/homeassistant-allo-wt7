@@ -1,26 +1,11 @@
 open_door:
-  name: Open door
-  description: >
-    Fires one open-door pulse on the wT7, for a given lock number.
-    Use this when you want an automation to be agnostic of which entities
-    are exposed (e.g. you only have one door, or you want to trigger
-    door 2 from an automation that knows the lock_number).
   fields:
     entry_id:
-      name: Config entry
-      description: >
-        The Allo wT7 integration entry ID. If you have only one wT7
-        configured, you can omit this and the integration will use it.
       required: false
-      example: "01HXYZ..."
       selector:
         config_entry:
           integration: allo_wt7
     lock_number:
-      name: Lock number
-      description: >
-        Which relay to pulse on the wT7. 1 = social door, 2 = garage gate
-        (or whatever you mapped). Defaults to 1.
       required: false
       default: 1
       example: 1
@@ -31,27 +16,13 @@ open_door:
           mode: box
 
 send_audio:
-  name: Send audio to the door speaker
-  description: >
-    Plays an audio clip through the wT7's door speaker (talk-back), e.g. a
-    recorded message or a text-to-speech phrase. Max 60 seconds. While it
-    plays, the wT7's single video session is used, so the Allo Plus app and the
-    physical intercom are unavailable for that time.
   fields:
     entry_id:
-      name: Config entry
-      description: >
-        The Allo wT7 integration entry ID. Omit it if you have only one wT7.
       required: false
       selector:
         config_entry:
           integration: allo_wt7
     media_content_id:
-      name: Audio
-      description: >
-        What to play: an http(s) URL, a `media-source://` item (including
-        `media-source://tts/...` for text-to-speech), a `/local/...` URL, or a
-        local file path that Home Assistant allows (e.g. /config/www/hi.mp3).
       required: true
       example: "media-source://tts/cloud?message=Ja+estou+indo"
       selector:
