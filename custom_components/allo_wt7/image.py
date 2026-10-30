@@ -16,7 +16,8 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN, EVENT_DOORBELL_RING, MANUFACTURER, MODEL
+from . import archive_download
+from .const import DOMAIN, EVENT_DOORBELL_RING, MANUFACTURER, MODEL, OEM_ID
 from .coordinator import AlloWT7Coordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -74,19 +75,45 @@ class AlloWT7LastRingImage(ImageEntity):
     @callback
     def _handle_ring_event(self, event: Event) -> None:
         """On a ring, kick off a background snapshot capture."""
-        self.hass.async_create_task(self._capture())
+        data = event.data or {}
+        self.hass.async_create_task(
+            self._capture(data.get("filename", ""), data.get("starttime", ""))
+        )
 
-    async def _capture(self) -> None:
-        if self._coordinator.video is None:
-            return
-        try:
-            creds = await self._coordinator.async_get_stream_credentials()
-            data = await self.hass.async_add_executor_job(
-                self._coordinator.video.snapshot_bytes,
-                creds,
-            )
-        except Exception as exc:  # noqa: BLE001
-            _LOGGER.warning("Could not capture last-ring snapshot: %s", exc)
+    async def _capture(self, filename: str = "", starttime: str = "") -> None:
+        """Fetch the *saved* SD-card snapshot for this ring (the actual frame
+        captured when the bell was pressed). Falls back to a fresh live frame
+        only if the archive download is unavailable."""
+        data: bytes | None = None
+        if filename:
+            try:
+                creds = await self._coordinator.async_get_stream_credentials()
+                data = await self.hass.async_add_executor_job(
+                    archive_download.download_record_jpeg,
+                    self._coordinator.monitor_ip,
+                    filename,
+                    starttime,
+                    creds.stream_key,
+                    creds.dynamic_password,
+                    OEM_ID,
+                )
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.warning("Archive snapshot download failed: %s", exc)
+                data = None
+        if not data:
+            # Legacy fallback: a fresh live frame if no saved file came back.
+            if self._coordinator.video is None:
+                return
+            try:
+                creds = await self._coordinator.async_get_stream_credentials()
+                data = await self.hass.async_add_executor_job(
+                    self._coordinator.video.snapshot_bytes,
+                    creds,
+                )
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.warning("Could not capture last-ring snapshot: %s", exc)
+                return
+        if not data:
             return
         self._image = data
         self._attr_image_last_updated = dt_util.utcnow()

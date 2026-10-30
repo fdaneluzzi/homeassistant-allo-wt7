@@ -105,6 +105,7 @@ class StreamCredentials:
     stream_key: str
     auth_code: str
     umid: str
+    dynamic_password: str = ""
     pwd_expired: str = ""
 
 
@@ -557,6 +558,8 @@ class AlloWT7Client:
                     or env.findtext(".//password-expired")
                     or ""
                 )
+                # File-channel auth for SD/archive download (see archive_download).
+                dynamic_password = env.findtext(".//dynamic-password") or ""
                 if not stream_key or not auth_code:
                     raise AlloWT7Error(
                         "device-token returned without stream key / auth code"
@@ -570,6 +573,7 @@ class AlloWT7Client:
                     stream_key=stream_key,
                     auth_code=auth_code,
                     umid=umid,
+                    dynamic_password=dynamic_password,
                     pwd_expired=pwd_expired,
                 )
             except aiohttp.ClientConnectorError as e:
