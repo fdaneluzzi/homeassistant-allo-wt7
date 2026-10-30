@@ -39,6 +39,7 @@ from .video import WT7Video
 from .const import (
     CONF_DOORBELL_ENABLED,
     CONF_DOORBELL_POLL_INTERVAL,
+    CONF_DOORBELL_SESSION_REFRESH,
     CONF_EMAIL,
     CONF_MAX_UNLOCKS_PER_HOUR,
     CONF_MIN_SECONDS_BETWEEN_UNLOCKS,
@@ -51,6 +52,7 @@ from .const import (
     CONF_UNLOCK_PIN,
     DEFAULT_DOORBELL_ENABLED,
     DEFAULT_DOORBELL_POLL_INTERVAL,
+    DEFAULT_DOORBELL_SESSION_REFRESH,
     DEFAULT_MAX_UNLOCKS_PER_HOUR,
     DEFAULT_MIN_SECONDS_BETWEEN_UNLOCKS,
     DEFAULT_MONITOR_RETRY_DELAY,
@@ -110,7 +112,9 @@ DOORBELL_WARMUP_MAX_POLLS = 15    # hard cap on warmup reads (flaky-device backs
 # session silently stops seeing new pictures (no protocol error, just no
 # new data) to this many seconds of extra ring-detection latency — same
 # order of magnitude as the post-ring throttle window below.
-DOORBELL_SESSION_REFRESH_S = 30.0
+# This refresh period is configurable (CONF_DOORBELL_SESSION_REFRESH); it,
+# not the poll interval, is the dominant lever on ring-detection latency,
+# because a reused session cannot see pictures recorded after it was opened.
 
 
 class AlloWT7Coordinator(DataUpdateCoordinator):
@@ -375,6 +379,9 @@ class AlloWT7Coordinator(DataUpdateCoordinator):
         normal_interval: float = self._opt(
             CONF_DOORBELL_POLL_INTERVAL, DEFAULT_DOORBELL_POLL_INTERVAL
         )
+        session_refresh_s: float = self._opt(
+            CONF_DOORBELL_SESSION_REFRESH, DEFAULT_DOORBELL_SESSION_REFRESH
+        )
         throttle_interval = 10.0   # seconds between polls right after a ring
         throttle_window = 30.0     # how long to stay in throttle mode
         error_backoff = 5.0        # sleep after a transient error
@@ -387,9 +394,11 @@ class AlloWT7Coordinator(DataUpdateCoordinator):
         session = async_get_clientsession(self._hass)
 
         _LOGGER.info(
-            "Doorbell polling started (%.1f s normal, %.1f s throttled)",
+            "Doorbell polling started (%.1f s normal, %.1f s throttled, "
+            "%.1f s session refresh)",
             normal_interval,
             throttle_interval,
+            session_refresh_s,
         )
 
         while True:
@@ -408,7 +417,7 @@ class AlloWT7Coordinator(DataUpdateCoordinator):
                 now_mono = time.monotonic()
                 if self._doorbell_session_id is not None and (
                     now_mono - self._doorbell_session_opened_at
-                    > DOORBELL_SESSION_REFRESH_S
+                    > session_refresh_s
                 ):
                     self._doorbell_session_id = None  # periodic forced refresh
 
