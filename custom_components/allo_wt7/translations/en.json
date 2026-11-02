@@ -38,7 +38,8 @@
         "data": {
           "doorbell_enabled": "Enable doorbell detection",
           "doorbell_poll_interval_s": "Poll interval in seconds (1–30)",
-          "doorbell_session_refresh_s": "Session refresh in seconds (5–120) — lower = faster ring detection, more LAN traffic"
+          "doorbell_session_refresh_s": "Session refresh in seconds (5–120) — lower = faster ring detection, more LAN traffic",
+          "aux_camera_channels": "Auxiliary cameras — enable a channel only if you have an extra camera wired to that input on the wT7 (snapshot-only, on demand)"
         }
       }
     }

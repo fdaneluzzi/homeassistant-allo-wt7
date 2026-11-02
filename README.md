@@ -191,6 +191,28 @@ automation:
 > players may show it narrow/tall. Forcing a 16:9 aspect ratio on your
 > dashboard camera card works around it.
 
+### Auxiliary cameras (extra cameras wired to the wT7)
+
+Some wT7 units drive **extra cameras on their own channels** — for example a
+camera wired to one of the monitor's inputs. These show up in the Allo Plus app
+as *"camera 2 / 3 / 4"* and are reachable over the same LAN video protocol by
+channel id.
+
+They are **opt-in**. By default none is exposed, so a unit without extra
+cameras gets no empty entity. To enable one, open the integration's options
+(**Settings → Devices & Services → Intelbras Allo wT7 → Configure**) and tick
+the channel(s) you actually have under **Auxiliary cameras**. Each ticked
+channel becomes a `camera.camera_<n>` entity, and the change applies
+immediately — no restart.
+
+Each auxiliary camera is **snapshot-only and on demand**: it fetches a still
+only while its view is open (cached for a few seconds), through the same
+single-session lock as the doorbell camera, so the two never contend. There is
+no continuous stream — put it behind a button/tap on your dashboard rather than
+an always-on camera card. A channel with nothing wired to it simply returns a
+black frame, which is why the option is opt-in: enable only the channels you
+have.
+
 ## Talk-back (speak through the door)
 
 The door speaker is exposed as a `media_player` entity (e.g.
