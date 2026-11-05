@@ -4,7 +4,7 @@ The wT7 writes a JPEG to its internal flash on every ring. The live-snapshot
 path grabs a *fresh* frame instead (by then the visitor is gone), so this module
 fetches the actual saved file over the LAN video channel (TCP 34567).
 
-Reverse-engineered from the official Allo Plus / Quvii uBell app traffic:
+Tested against the official Allo Plus / Quvii uBell app traffic:
   * file-channel auth is the cloud ``dynamic-password`` (NOT ``auth_code``),
     formatted ``adminapp&&<dynamic-password>.<OEM>.``;
   * the device stays silent to a bare Open (0x02) — the app pipelines
