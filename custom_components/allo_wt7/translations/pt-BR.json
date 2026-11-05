@@ -62,6 +62,14 @@
       "speaker": {
         "name": "Alto-falante"
       }
+    },
+    "sensor": {
+      "ip_address": {
+        "name": "Endereço IP"
+      },
+      "mac_address": {
+        "name": "Endereço MAC"
+      }
     }
   },
   "services": {

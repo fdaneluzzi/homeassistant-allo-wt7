@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 DOMAIN = "allo_wt7"
-PLATFORMS = ["button", "event", "camera", "image", "media_player"]
+PLATFORMS = ["button", "event", "camera", "image", "media_player", "sensor"]
 
 MANUFACTURER = "Intelbras"
 MODEL = "Allo wT7"
