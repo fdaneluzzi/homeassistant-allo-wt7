@@ -6,7 +6,7 @@
 
 Open the doors of your **Intelbras Allo wT7** video intercom from Home Assistant — and see who's at the door — over the local network, without keeping the official Allo Plus app running.
 
-> **Status: 0.6.0.** Door opening, doorbell ring detection, **live camera**, **ring snapshots** and **talk-back** (play audio through the door speaker) are working and validated against a real device (model `IDS9478AW`).  The live stream carries the door's microphone audio.
+> **Status: 0.6.1.** Door opening, doorbell ring detection, **live camera**, **ring snapshots** and **talk-back** (play audio through the door speaker) are working and validated against a real device (model `IDS9478AW`).  The live stream carries the door's microphone audio.
 
 ## Features
 
@@ -283,7 +283,8 @@ The cloud is contacted only to fetch two short-lived per-device credentials — 
 - [x] 0.3.0 — Doorbell ring detection via `event` entity
 - [x] 0.5.0 — Live `camera` entity + last-ring `image` snapshot
 - [x] 0.5.1 — Single-session video manager, 16:9 corrected snapshots
-- [x] 0.6.0 — Talk-back and door audio (current)
+- [x] 0.6.0 — Talk-back and door audio
+- [x] 0.6.1 — IP and MAC address diagnostic sensors (current)
 - [ ] Square-pixel (16:9) live stream
 - [x] Door audio in the live stream and a `media_player` for the door speaker
 - [ ] Talk with your computer's microphone while watching the video
