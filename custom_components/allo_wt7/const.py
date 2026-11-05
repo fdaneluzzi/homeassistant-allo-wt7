@@ -79,6 +79,17 @@ DEFAULT_DOORBELL_POLL_INTERVAL = 2.0
 DEFAULT_DOORBELL_SESSION_REFRESH = 30.0
 EVENT_DOORBELL_RING = f"{DOMAIN}_doorbell_ring"
 
+# --- Auxiliary cameras (extra cameras wired to the wT7's channels)
+# Some wT7 units drive extra cameras on their own channels (e.g. a camera
+# wired to the monitor's jumper input). Those appear in the Allo Plus app as
+# "camera 2/3/4" and are reachable over the same LAN video protocol by channel
+# id. They are opt-in: by default none is exposed, so a unit without extra
+# cameras gets no dead/blank entity. The user enables the ones they have in
+# the integration's options.
+CONF_AUX_CAMERA_CHANNELS = "aux_camera_channels"
+AUX_CAMERA_CHANNELS = (2, 3, 4)  # channels selectable as auxiliary cameras
+DEFAULT_AUX_CAMERA_CHANNELS: list[str] = []
+
 # --- Services
 SERVICE_OPEN_DOOR = "open_door"
 SERVICE_SEND_AUDIO = "send_audio"

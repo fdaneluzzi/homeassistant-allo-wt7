@@ -297,23 +297,31 @@ class WT7Video:
     def _streaming(self) -> bool:
         return self._bridge is not None and self._bridge.is_running()
 
-    def snapshot_bytes(self, creds: StreamCredentials) -> bytes:
-        """Blocking (executor): one JPEG, from the live stream if one is up."""
+    def snapshot_bytes(
+        self, creds: StreamCredentials, channel: int | None = None
+    ) -> bytes:
+        """Blocking (executor): one JPEG, from the live stream if one is up.
+
+        ``channel`` selects an auxiliary camera (e.g. a camera wired to the
+        wT7's jumper 3). It goes through the same session lock as the main
+        channel, so the two never contend for the device's single video
+        session. Only the main channel reuses the live RTSP bridge; an aux
+        channel always takes a brief dedicated direct session (otherwise it
+        would return a frame from the main channel's running stream).
+        """
+        ch = self._channel if channel is None else channel
         with self._lock:
-            if not self._streaming():
-                # No stream: a brief dedicated session is safe.
-                return _direct_snapshot(
-                    self._host, creds, self._channel, self._stream
-                )
-            url = self._bridge.url  # type: ignore[union-attr]
+            if ch == self._channel and self._streaming():
+                url = self._bridge.url  # type: ignore[union-attr]
+            else:
+                # Aux channel, or no stream: a brief dedicated session is safe.
+                return _direct_snapshot(self._host, creds, ch, self._stream)
         try:
             return _grab_from_rtsp(url)
         except Exception:  # noqa: BLE001
             # Stream went away between the check and the grab — fall back.
             with self._lock:
-                return _direct_snapshot(
-                    self._host, creds, self._channel, self._stream
-                )
+                return _direct_snapshot(self._host, creds, ch, self._stream)
 
     def stream_url(self, creds: StreamCredentials) -> str:
         """Blocking (executor): ensure the RTSP bridge is up, return its URL."""

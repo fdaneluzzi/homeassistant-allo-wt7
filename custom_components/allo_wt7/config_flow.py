@@ -10,6 +10,7 @@ from homeassistant import config_entries
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers import config_validation as cv
 
 from .client import (
     AlloWT7AuthError,
@@ -20,6 +21,8 @@ from .client import (
     generate_client_id,
 )
 from .const import (
+    AUX_CAMERA_CHANNELS,
+    CONF_AUX_CAMERA_CHANNELS,
     CONF_DOOR1_NAME,
     CONF_DOOR2_ENABLED,
     CONF_DOOR2_NAME,
@@ -29,6 +32,7 @@ from .const import (
     CONF_MONITOR_IP,
     CONF_REQUIRE_PIN,
     CONF_UNLOCK_PIN,
+    DEFAULT_AUX_CAMERA_CHANNELS,
     DEFAULT_DOOR1_NAME,
     DEFAULT_DOOR2_NAME,
     DEFAULT_DOORBELL_ENABLED,
@@ -63,6 +67,12 @@ OPTIONS_SCHEMA = vol.Schema(
             CONF_DOORBELL_SESSION_REFRESH,
             default=DEFAULT_DOORBELL_SESSION_REFRESH,
         ): vol.All(vol.Coerce(float), vol.Range(min=5.0, max=120.0)),
+        vol.Optional(
+            CONF_AUX_CAMERA_CHANNELS,
+            default=list(DEFAULT_AUX_CAMERA_CHANNELS),
+        ): cv.multi_select(
+            {str(ch): f"Channel {ch}" for ch in AUX_CAMERA_CHANNELS}
+        ),
     }
 )
 
@@ -85,6 +95,9 @@ class AlloWT7OptionsFlow(config_entries.OptionsFlow):
             ),
             CONF_DOORBELL_SESSION_REFRESH: self.config_entry.options.get(
                 CONF_DOORBELL_SESSION_REFRESH, DEFAULT_DOORBELL_SESSION_REFRESH
+            ),
+            CONF_AUX_CAMERA_CHANNELS: self.config_entry.options.get(
+                CONF_AUX_CAMERA_CHANNELS, list(DEFAULT_AUX_CAMERA_CHANNELS)
             ),
         }
         return self.async_show_form(

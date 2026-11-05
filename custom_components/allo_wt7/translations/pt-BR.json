@@ -38,7 +38,8 @@
         "data": {
           "doorbell_enabled": "Ativar detecção de campainha",
           "doorbell_poll_interval_s": "Intervalo de consulta em segundos (1–30)",
-          "doorbell_session_refresh_s": "Atualização da sessão em segundos (5–120) — menor = detecção mais rápida do toque, mais tráfego na rede"
+          "doorbell_session_refresh_s": "Atualização da sessão em segundos (5–120) — menor = detecção mais rápida do toque, mais tráfego na rede",
+          "aux_camera_channels": "Câmeras auxiliares — ative um canal só se você tiver uma câmera extra ligada naquela entrada do wT7 (só snapshot, sob demanda)"
         }
       }
     }
