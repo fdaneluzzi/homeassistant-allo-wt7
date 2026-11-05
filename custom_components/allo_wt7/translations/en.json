@@ -62,6 +62,14 @@
       "speaker": {
         "name": "Speaker"
       }
+    },
+    "sensor": {
+      "ip_address": {
+        "name": "IP address"
+      },
+      "mac_address": {
+        "name": "MAC address"
+      }
     }
   },
   "services": {
