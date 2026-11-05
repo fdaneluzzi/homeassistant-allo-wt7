@@ -213,6 +213,11 @@ an always-on camera card. A channel with nothing wired to it simply returns a
 black frame, which is why the option is opt-in: enable only the channels you
 have.
 
+If the single video session is momentarily busy (e.g. right after a reload, or
+while the doorbell camera is handing off), an auxiliary grab is retried a few
+times; if it still can't get through, the entity keeps serving its last still
+instead of showing a broken image.
+
 ## Talk-back (speak through the door)
 
 The door speaker is exposed as a `media_player` entity (e.g.
