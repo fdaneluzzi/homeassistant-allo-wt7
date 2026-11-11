@@ -14,7 +14,7 @@
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/fdaneluzzi/homeassistant-allo-wt7/issues",
   "requirements": [
-    "quii-helper==0.3.0"
+    "quii-helper==0.5.1"
   ],
   "version": "0.7.0"
 }
